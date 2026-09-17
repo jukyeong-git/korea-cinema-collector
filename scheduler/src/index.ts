@@ -38,13 +38,14 @@ export class CinemaScheduler extends DurableObject<Env> {
     ).toArray();
     if (!inserted.length) return;
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:alarm`, now + 30_000, now + 60_000);
-    await this.armNextAlarm();
-    const pending = [this.sendSlot(`${cycle}:cron`)];
+    const immediate = [`${cycle}:cron`];
     if (this.env.SCHEDULE_ENABLED === "true") {
       this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:schedule`, now, now + 60_000);
-      pending.push(this.sendSlot(`${cycle}:schedule`));
+      this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:schedule:alarm`, now + 30_000, now + 60_000);
+      immediate.push(`${cycle}:schedule`);
     }
-    await Promise.all(pending);
+    await this.armNextAlarm();
+    await Promise.all(immediate.map(id => this.sendSlot(id)));
   }
   private async armNextAlarm(): Promise<void> {
     const next = this.ctx.storage.sql.exec<{ due: number }>(
@@ -57,11 +58,13 @@ export class CinemaScheduler extends DurableObject<Env> {
       "UPDATE slots SET status = 'claimed' WHERE id = ? AND status = 'pending' RETURNING *", id,
     ).toArray()[0];
     if (!slot) return;
-    if (Date.now() > slot.expires || this.env.ENABLED !== "true") {
+    const isSchedule = id.endsWith(":schedule") || id.endsWith(":schedule:alarm");
+    if (Date.now() > slot.expires || this.env.ENABLED !== "true"
+      || (isSchedule && this.env.SCHEDULE_ENABLED !== "true")) {
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE id = ?", id); return;
     }
     try {
-      await dispatchWorkflow(id.endsWith(":schedule")
+      await dispatchWorkflow(isSchedule
         ? { ...this.env, GITHUB_WORKFLOW: this.env.GITHUB_SCHEDULE_WORKFLOW } : this.env, id);
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'sent' WHERE id = ?", id);
     } catch (error) {
@@ -75,7 +78,7 @@ export class CinemaScheduler extends DurableObject<Env> {
     const due = this.ctx.storage.sql.exec<Slot>(
       "SELECT * FROM slots WHERE status = 'pending' AND id LIKE '%:alarm' AND due <= ? ORDER BY due", Date.now(),
     ).toArray();
-    try { for (const slot of due) await this.sendSlot(slot.id); }
+    try { await Promise.all(due.map(slot => this.sendSlot(slot.id))); }
     finally { await this.armNextAlarm(); }
   }
 }

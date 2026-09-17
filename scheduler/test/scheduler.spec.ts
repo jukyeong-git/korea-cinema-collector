@@ -23,10 +23,10 @@ it("dispatches at cron and 30s alarm; deduplicates cron and alarm using durable 
     state.storage.sql.exec("UPDATE slots SET due = ? WHERE id LIKE '%:alarm'", Date.now() - 1);
   });
   expect(await runDurableObjectAlarm(stub)).toBe(true);
-  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher).toHaveBeenCalledTimes(4);
   await runInDurableObject(stub, obj => obj.alarm());
-  expect(fetcher).toHaveBeenCalledTimes(3);
-  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/schedule.yml/"))).toHaveLength(1);
+  expect(fetcher).toHaveBeenCalledTimes(4);
+  expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/schedule.yml/"))).toHaveLength(2);
   expect(fetcher.mock.calls.filter(([url]) => String(url).includes("/seats.yml/"))).toHaveLength(2);
   expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ ref: "main", inputs: { dry_run: "true" } });
 });
