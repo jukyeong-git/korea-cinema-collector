@@ -4,3 +4,8 @@ mkdirSync('dist', { recursive: true });
 buildSync({ entryPoints: ['src/platform/aws/receiver.ts'], bundle: true, platform: 'node', target: 'node22',
   format: 'esm', outfile: 'dist/handler.mjs',
   banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });
+
+mkdirSync('dist-schedule', { recursive: true });
+buildSync({ entryPoints: ['src/platform/aws/schedule-receiver.ts'], bundle: true, platform: 'node', target: 'node22',
+  format: 'esm', outfile: 'dist-schedule/handler.mjs',
+  banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });

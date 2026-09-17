@@ -1,0 +1,69 @@
+name: korea-cinema-collector-schedule
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Validate JSON against DynamoDB without writes or Telegram delivery
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  id-token: write
+# Serialize with the seat workflow because both persist files on the state branch.
+concurrency:
+  group: preferred-seats
+  cancel-in-progress: false
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      AWS_REGION: ap-northeast-2
+      TABLE_NAME: korea-cinema-alert
+      LAMBDA_FUNCTION_NAME: korea-cinema-alert-schedule-temp
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      STATE_PATH: state/schedule.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: state
+          path: state
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        id: node
+        with:
+          node-version: '22'
+      - name: Restore installed dependencies
+        id: dependencies
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: node_modules
+          key: seats-dependencies-v2-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json', 'package.json') }}
+      - name: Install dependencies on cache miss
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        run: npm ci --ignore-scripts
+      - name: Save installed dependencies
+        if: steps.dependencies.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: node_modules
+          key: ${{ steps.dependencies.outputs.cache-primary-key }}
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          role-session-name: seats-${{ github.run_id }}
+      - name: Collect schedule and deliver changed JSON
+        run: node --import tsx scripts/collect-schedule.ts
+      - name: Persist acknowledged hash or CGV cooldown
+        if: ${{ always() && inputs.dry_run != true }}
+        working-directory: state
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if [ ! -f schedule.json ]; then exit 0; fi
+          git add schedule.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update acknowledged schedule state'
+            git push origin HEAD:state
+          fi

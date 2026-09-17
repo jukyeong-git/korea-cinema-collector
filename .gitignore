@@ -12,3 +12,5 @@ cdk.out/
 
 .wrangler/
 .dev.vars*
+
+dist-schedule/
