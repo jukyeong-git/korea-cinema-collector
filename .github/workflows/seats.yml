@@ -1,7 +1,5 @@
 name: korea-cinema-collector-seats
 on:
-  schedule:
-    - cron: '2-57/5 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -16,7 +14,6 @@ concurrency:
   cancel-in-progress: false
 jobs:
   collect:
-    if: ${{ github.event_name == 'workflow_dispatch' || vars.SEATS_SCHEDULE_ENABLED == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:

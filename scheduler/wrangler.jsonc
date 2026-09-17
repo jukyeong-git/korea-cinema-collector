@@ -11,7 +11,7 @@
   "vars": {
     "GITHUB_REPOSITORY": "jukyeong-git/korea-cinema-collector",
     "GITHUB_WORKFLOW": "seats.yml", "GITHUB_REF": "main",
-    "ENABLED": "false", "DRY_RUN": "true"
+    "ENABLED": "true", "DRY_RUN": "false"
   },
   "secrets": { "required": ["GITHUB_TOKEN"] },
   "triggers": { "crons": ["* * * * *"] },
