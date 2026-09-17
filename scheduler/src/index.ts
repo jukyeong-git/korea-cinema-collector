@@ -16,7 +16,7 @@ export async function dispatchWorkflow(env: Env, slot: string, fetcher: typeof f
   });
   await response.body?.cancel();
   if (response.status !== 200 && response.status !== 204) throw Error(`GitHub dispatch failed: HTTP ${response.status}`);
-  console.log(JSON.stringify({ event: "github_dispatched", slot, dryRun: env.DRY_RUN === "true" }));
+  console.log(JSON.stringify({ event: "github_dispatched", slot, workflow: env.GITHUB_WORKFLOW, dryRun: env.DRY_RUN === "true" }));
 }
 
 export class CinemaScheduler extends DurableObject<Env> {
@@ -39,7 +39,12 @@ export class CinemaScheduler extends DurableObject<Env> {
     if (!inserted.length) return;
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:alarm`, now + 30_000, now + 60_000);
     await this.armNextAlarm();
-    await this.sendSlot(`${cycle}:cron`);
+    const pending = [this.sendSlot(`${cycle}:cron`)];
+    if (this.env.SCHEDULE_ENABLED === "true") {
+      this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:schedule`, now, now + 60_000);
+      pending.push(this.sendSlot(`${cycle}:schedule`));
+    }
+    await Promise.all(pending);
   }
   private async armNextAlarm(): Promise<void> {
     const next = this.ctx.storage.sql.exec<{ due: number }>(
@@ -56,7 +61,8 @@ export class CinemaScheduler extends DurableObject<Env> {
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE id = ?", id); return;
     }
     try {
-      await dispatchWorkflow(this.env, id);
+      await dispatchWorkflow(id.endsWith(":schedule")
+        ? { ...this.env, GITHUB_WORKFLOW: this.env.GITHUB_SCHEDULE_WORKFLOW } : this.env, id);
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'sent' WHERE id = ?", id);
     } catch (error) {
       // GitHub dispatch has no idempotency key. Do not replay ambiguous requests;

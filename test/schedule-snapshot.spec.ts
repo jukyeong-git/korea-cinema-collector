@@ -1,0 +1,30 @@
+import { expect, it, vi } from "vitest";
+import type { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { parseRows } from "../src/collectors/cgv-model";
+import { publishScheduleSnapshot } from "../src/platform/aws/schedule-snapshot";
+import { makeSchedulePayload } from "../src/core/schedule-payload";
+const now = new Date("2026-09-17T10:00:00Z");
+const session = { ...parseRows([{ title: "영화", screen: "IMAX", format: "IMAX", time: "18:00", status: "예매 가능", disabled: false }], "2026-09-18")[0], movieNo: "123" };
+const candidate = { ...session, isDayBoundary: false, seatQuery: { coCd: "A420", siteNo: "0013", scnsNo: "018", scnYmd: "20260918", scnSseq: "2" } };
+const schedule = { dates: ["2026-09-18"], sessions: [session], seatCandidates: [candidate] };
+it("refreshes candidates on unchanged schedule hashes, including sold-out performances", async () => {
+  const send = vi.fn().mockResolvedValue({});
+  const db = { send } as unknown as DynamoDBDocumentClient;
+  const next = new Date(now.getTime() + 60000);
+  expect(makeSchedulePayload(schedule, next).hash).toBe(makeSchedulePayload(schedule, now).hash);
+  await publishScheduleSnapshot("test", schedule, now, db);
+  await publishScheduleSnapshot("test", { ...schedule, sessions: [] }, next, db);
+  expect(send).toHaveBeenCalledTimes(2);
+  expect(send.mock.calls[1][0].input.Item).toMatchObject({ candidates: [candidate], observedAt: next.toISOString(), source: "github-actions" });
+  expect(send.mock.calls[1][0].input.ConditionExpression).toContain("observedAt <=");
+});
+it("does not overwrite newer snapshots and fails closed for invalid data or database errors", async () => {
+  const send = vi.fn().mockRejectedValueOnce(Object.assign(Error("newer"), { name: "ConditionalCheckFailedException" }));
+  const db = { send } as unknown as DynamoDBDocumentClient;
+  expect(await publishScheduleSnapshot("test", schedule, now, db)).toMatchObject({ published: false });
+  send.mockRejectedValueOnce(Error("DynamoDB unavailable"));
+  await expect(publishScheduleSnapshot("test", schedule, now, db)).rejects.toThrow("unavailable");
+  await expect(publishScheduleSnapshot("test", { ...schedule, seatCandidates: undefined }, now, db)).rejects.toThrow("Missing");
+  await expect(publishScheduleSnapshot("test", { ...schedule, seatCandidates: [{ ...candidate, isDayBoundary: undefined }] }, now, db)).rejects.toThrow("query");
+  expect(send).toHaveBeenCalledTimes(2);
+});

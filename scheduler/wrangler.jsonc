@@ -4,17 +4,48 @@
   "account_id": "90eeda01b0ac6fb7e6bf3253caaf9911",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-17",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": false,
   "preview_urls": false,
-  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
   "vars": {
     "GITHUB_REPOSITORY": "jukyeong-git/korea-cinema-collector",
-    "GITHUB_WORKFLOW": "seats.yml", "GITHUB_REF": "main",
-    "ENABLED": "true", "DRY_RUN": "false"
+    "GITHUB_WORKFLOW": "seats.yml",
+    "GITHUB_REF": "main",
+    "ENABLED": "true",
+    "DRY_RUN": "false",
+    "SCHEDULE_ENABLED": "false",
+    "GITHUB_SCHEDULE_WORKFLOW": "schedule.yml"
   },
-  "secrets": { "required": ["GITHUB_TOKEN"] },
-  "triggers": { "crons": ["* * * * *"] },
-  "durable_objects": { "bindings": [{ "name": "SCHEDULER", "class_name": "CinemaScheduler" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["CinemaScheduler"] }]
+  "secrets": {
+    "required": [
+      "GITHUB_TOKEN"
+    ]
+  },
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCHEDULER",
+        "class_name": "CinemaScheduler"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "CinemaScheduler"
+      ]
+    }
+  ]
 }

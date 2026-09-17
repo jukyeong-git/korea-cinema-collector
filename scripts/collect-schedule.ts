@@ -1,3 +1,4 @@
+import { publishScheduleSnapshot } from "../src/platform/aws/schedule-snapshot";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { fetchApiImaxSessions } from "../src/collectors/cgv-api";
@@ -16,7 +17,12 @@ if (state.retryAt && state.retryAt > Date.now()) {
   try {
     // Existing complete-calendar collector, with at most five simultaneous requests.
     const schedule = await fetchApiImaxSessions();
-    const payload = makeSchedulePayload(schedule);
+    const observedAt = new Date();
+    const payload = makeSchedulePayload(schedule, observedAt);
+    if (!dryRun) {
+      console.log(JSON.stringify({ event: "schedule_snapshot", ...await publishScheduleSnapshot(
+        process.env.TABLE_NAME ?? "korea-cinema-alert", schedule, observedAt) }));
+    }
     const result = await deliverChangedSchedule(payload, state, async value => {
       const response = await new LambdaClient({}).send(new InvokeCommand({
         FunctionName: process.env.LAMBDA_FUNCTION_NAME ?? "korea-cinema-alert-schedule-temp",

@@ -33,6 +33,9 @@ const runner = new iam.Role(stack, "GitHubRunner", {
 });
 runner.addToPolicy(new iam.PolicyStatement({ actions: ["dynamodb:GetItem", "dynamodb:BatchGetItem"], resources: [tableArn],
   conditions: { "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["STATE#seat_candidates", "SESSION#*", "SEATSTATE#*"] } } }));
+runner.addToPolicy(new iam.PolicyStatement({ actions: ["dynamodb:PutItem"], resources: [tableArn],
+  conditions: { "ForAllValues:StringEquals": { "dynamodb:LeadingKeys": ["STATE#seat_candidates"] } },
+}));
 fn.grantInvoke(runner);
 new CfnOutput(stack, "GitHubRoleArn", { value: runner.roleArn });
 new CfnOutput(stack, "FunctionName", { value: fn.functionName });

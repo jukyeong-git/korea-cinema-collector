@@ -37,7 +37,7 @@ export async function handler(event: unknown) {
         await sendTelegramGroup(token, chat, group);
       },
     }, now);
-    // The active legacy schedule collector remains the writer of seat-candidate freshness.
+    // GitHub Actions publishes seat-candidate freshness even when this payload hash is unchanged.
     return { accepted: true, dryRun: false, hash: payload.hash, notificationsEnabled, ...outcome };
   }, undefined, "STATE#schedule_lease");
   if ("skipped" in result) throw Error("Schedule receiver busy; hash not acknowledged");

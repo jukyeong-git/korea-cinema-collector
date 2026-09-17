@@ -57,11 +57,4 @@ jobs:
       - name: Persist acknowledged hash or CGV cooldown
         if: ${{ always() && inputs.dry_run != true }}
         working-directory: state
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add seats.json
-          if ! git diff --cached --quiet; then
-            git commit -m 'Update acknowledged seats state'
-            git push origin HEAD:state
-          fi
+        run: bash ../scripts/persist-state.sh seats.json
