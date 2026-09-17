@@ -19,7 +19,7 @@
     "GITHUB_REF": "main",
     "ENABLED": "true",
     "DRY_RUN": "false",
-    "SCHEDULE_ENABLED": "false",
+    "SCHEDULE_ENABLED": "true",
     "GITHUB_SCHEDULE_WORKFLOW": "schedule.yml"
   },
   "secrets": {
