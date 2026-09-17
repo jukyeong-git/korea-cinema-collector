@@ -6,3 +6,6 @@ cdk.out/
 *.log
 .codex/
 .DS_Store
+
+# Markdown files and records are forbidden in this repository.
+*.[mM][dD]
