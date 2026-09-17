@@ -42,7 +42,7 @@ new CfnOutput(stack, "FunctionName", { value: fn.functionName });
 
 const scheduleParameters = [parameters[0], "/korea-cinema-alert/prod/telegram-chat-id"];
 const scheduleReceiver = new lambda.Function(stack, "ScheduleReceiverTemp", {
-  functionName: "korea-cinema-alert-schedule-temp", runtime: lambda.Runtime.NODEJS_22_X,
+  functionName: "korea-cinema-alert-schedule", runtime: lambda.Runtime.NODEJS_22_X,
   architecture: lambda.Architecture.ARM_64, memorySize: 256, timeout: Duration.seconds(30),
   handler: "handler.handler", code: lambda.Code.fromAsset("dist-schedule"),
   environment: { TABLE_NAME: "korea-cinema-alert", ALERTS_ENABLED: "true",

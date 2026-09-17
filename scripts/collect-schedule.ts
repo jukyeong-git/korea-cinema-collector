@@ -25,7 +25,7 @@ if (state.retryAt && state.retryAt > Date.now()) {
     }
     const result = await deliverChangedSchedule(payload, state, async value => {
       const response = await new LambdaClient({}).send(new InvokeCommand({
-        FunctionName: process.env.LAMBDA_FUNCTION_NAME ?? "korea-cinema-alert-schedule-temp",
+        FunctionName: process.env.LAMBDA_FUNCTION_NAME ?? "korea-cinema-alert-schedule",
         InvocationType: "RequestResponse", Payload: Buffer.from(JSON.stringify({ ...value, dryRun })),
       }));
       if (response.FunctionError || response.StatusCode !== 200 || !response.Payload) {

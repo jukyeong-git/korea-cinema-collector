@@ -19,7 +19,7 @@ jobs:
     env:
       AWS_REGION: ap-northeast-2
       TABLE_NAME: korea-cinema-alert
-      LAMBDA_FUNCTION_NAME: korea-cinema-alert-schedule-temp
+      LAMBDA_FUNCTION_NAME: korea-cinema-alert-schedule
       DRY_RUN: ${{ inputs.dry_run || 'false' }}
       STATE_PATH: state/schedule.json
     steps:
