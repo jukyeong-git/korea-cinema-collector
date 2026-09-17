@@ -304,3 +304,19 @@ it("publishes a complete candidate snapshot and skips missing or stale snapshots
   expect(await repo.legacyCooldownActive(now)).toBe(true);
   expect(await repo.legacyCooldownActive(now + 1800001)).toBe(false);
 });
+
+it("checks candidate freshness after a concurrent DynamoDB read completes", async () => {
+  const start = Date.parse("2026-09-17T07:38:15Z");
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(start);
+    const client = { send: vi.fn(async () => {
+      vi.setSystemTime(start + 1000);
+      return { Item: { observedAt: new Date(start + 500).toISOString(), candidates: [] } };
+    }) };
+    const repo = new DynamoDbSessionRepository(client as unknown as DynamoDBDocumentClient, "test");
+    expect(await repo.readSeatCandidates()).toEqual([]);
+    expect(await repo.readSeatCandidates(start)).toBeUndefined();
+    expect(await repo.readSeatCandidates(start + 180501)).toBeUndefined();
+  } finally { vi.useRealTimers(); }
+});

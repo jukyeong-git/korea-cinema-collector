@@ -225,11 +225,12 @@ export class DynamoDbSessionRepository implements SessionRepository, SeatMonitor
     await this.client.send(new PutCommand({ TableName: this.tableName, Item: item }));
   }
 
-  async readSeatCandidates(now = Date.now()): Promise<SeatCandidate[] | undefined> {
+  async readSeatCandidates(now?: number): Promise<SeatCandidate[] | undefined> {
     const { Item } = await this.client.send(new GetCommand({ TableName: this.tableName,
       Key: { pk: "STATE#seat_candidates" }, ConsistentRead: true }));
     if (!Item) return undefined;
-    const age = now - Date.parse(Item.observedAt);
+    // A concurrent publisher can update observedAt while the read is in flight.
+    const age = (now ?? Date.now()) - Date.parse(Item.observedAt);
     if (!Number.isFinite(age) || age < 0 || age > 180_000) return undefined;
     if (!Array.isArray(Item.candidates)) throw Error("Malformed stored seat candidates");
     return Item.candidates as SeatCandidate[];
