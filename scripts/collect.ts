@@ -35,7 +35,6 @@ if (state.retryAt && state.retryAt > now.getTime()) {
       throw errors[0].reason;
     }
     const payload = makePayload(entries, now);
-    writeFileSync("payload.json", JSON.stringify(payload));
     console.log(JSON.stringify({ checked: entries.length, hash: payload.hash, changed: state.hash !== payload.hash }));
     if (process.env.DRY_RUN === "true") {
       console.log("Dry run: collection validated; Lambda and state unchanged");

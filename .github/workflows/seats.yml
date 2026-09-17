@@ -1,4 +1,4 @@
-name: Preferred seats
+name: korea-cinema-collector-seats
 on:
   schedule:
     - cron: '2-57/5 * * * *'
@@ -35,13 +35,12 @@ jobs:
         id: node
         with:
           node-version: '22'
-          cache: npm
       - name: Restore installed dependencies
         id: dependencies
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: node_modules
-          key: seats-dependencies-v1-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json', 'package.json', '.github/workflows/seats.yml') }}
+          key: seats-dependencies-v2-${{ runner.os }}-${{ runner.arch }}-node${{ steps.node.outputs.node-version }}-${{ hashFiles('package-lock.json', 'package.json') }}
       - name: Install dependencies on cache miss
         if: steps.dependencies.outputs.cache-hit != 'true'
         run: npm ci --ignore-scripts
@@ -69,9 +68,3 @@ jobs:
             git commit -m 'Update acknowledged seats state'
             git push origin HEAD:state
           fi
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: success()
-        with:
-          name: seat-observation
-          path: payload.json
-          retention-days: 3
