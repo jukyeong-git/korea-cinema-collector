@@ -155,7 +155,7 @@ it("separates opening/release messages, sorts dates and times, uses seats→time
   expect(opening).not.toContain("🕒");
   expect(opening).toContain("<b>⭐ 신규 일정 오픈</b>\n\n<b>🎬 오디세이</b>\n📍 CGV 용산아이파크몰 IMAX관\n\n");
   const release = buildTelegramPayload("test", groups.find(g => g.sessions[0].releasedSeatLabels !== undefined)!).text;
-  expect(release).toContain("<b>🔔 선호 좌석 오픈</b>");
+  expect(release).toContain("<b>🔔 명당 좌석 오픈</b>");
   expect(release).toContain("📍 CGV 용산아이파크몰 IMAX관\n\n");
   expect(release).toContain("🪑 H10\n🕒 <code>18:00</code>\n🎫 <a");
   expect(release.indexOf("18:00")).toBeLessThan(release.indexOf("21:30"));

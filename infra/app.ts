@@ -8,7 +8,7 @@ const stack = new Stack(app, "KoreaCinemaCollectorSeatsStack", {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: "ap-northeast-2" },
 });
 const tableArn = stack.formatArn({ service: "dynamodb", resource: "table", resourceName: "korea-cinema-alert" });
-const parameters = ["/korea-cinema-alert/prod/telegram-bot-token", "/korea-cinema-alert/prod/telegram-chat-id"];
+const parameters = ["/korea-cinema-alert/prod/telegram-bot-token", "/korea-cinema-alert/prod/telegram-seats-chat-id"];
 const fn = new lambda.Function(stack, "Receiver", {
   functionName: "korea-cinema-alert-seats", runtime: lambda.Runtime.NODEJS_22_X,
   architecture: lambda.Architecture.ARM_64, memorySize: 256, timeout: Duration.seconds(30),

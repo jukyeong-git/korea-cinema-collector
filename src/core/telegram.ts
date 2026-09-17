@@ -165,7 +165,7 @@ export function buildTelegramPayload(chatId: string, group: NotificationGroup) {
 	return {
 		chat_id: chatId,
 		text: [
-      seatAlert ? "<b>🔔 선호 좌석 오픈</b>" : "<b>⭐ 신규 일정 오픈</b>",
+      seatAlert ? "<b>🔔 명당 좌석 오픈</b>" : "<b>⭐ 신규 일정 오픈</b>",
       "",
 			`<b>🎬 ${escapeTelegramHtml(group.title)}</b>`,
 			`📍 ${[...new Set(group.sessions.map(session => displayVenue(session.venue)))].map(escapeTelegramHtml).join(" · ")}`,
