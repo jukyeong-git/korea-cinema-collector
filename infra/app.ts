@@ -23,7 +23,8 @@ const runner = new iam.Role(stack, "GitHubRunner", {
   roleName: "korea-cinema-collector-seats-github",
   assumedBy: new iam.OpenIdConnectPrincipal(provider, { StringEquals: {
     "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-    "token.actions.githubusercontent.com:sub": "repo:jukyeong-git/korea-cinema-collector-seats:ref:refs/heads/main",
+    // This repository uses GitHub's immutable subject IDs (queried via the OIDC customization API).
+    "token.actions.githubusercontent.com:sub": "repo:jukyeong-git@206012346/korea-cinema-collector-seats@1373957479:ref:refs/heads/main",
   } }),
   maxSessionDuration: Duration.hours(1),
 });
