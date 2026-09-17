@@ -1,0 +1,62 @@
+name: Preferred seats
+on:
+  schedule:
+    - cron: '2-57/5 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Collect and validate without invoking Lambda or changing state
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  id-token: write
+concurrency:
+  group: preferred-seats
+  cancel-in-progress: false
+jobs:
+  collect:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.SEATS_SCHEDULE_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      AWS_REGION: ap-northeast-2
+      TABLE_NAME: korea-cinema-alert
+      LAMBDA_FUNCTION_NAME: korea-cinema-alert-seats
+      DRY_RUN: ${{ inputs.dry_run || 'false' }}
+      STATE_PATH: state/seats.json
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: state
+          path: state
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ap-northeast-2
+          role-session-name: seats-${{ github.run_id }}
+      - name: Collect all weekdays and deliver changed JSON
+        run: npm run collect
+      - name: Persist acknowledged hash or CGV cooldown
+        if: ${{ always() && inputs.dry_run != true }}
+        working-directory: state
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add seats.json
+          if ! git diff --cached --quiet; then
+            git commit -m 'Update acknowledged seats state'
+            git push origin HEAD:state
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success()
+        with:
+          name: seat-observation
+          path: payload.json
+          retention-days: 3

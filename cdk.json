@@ -1,0 +1,1 @@
+{"app":"node --import tsx infra/app.ts"}
