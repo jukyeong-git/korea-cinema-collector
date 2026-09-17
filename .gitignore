@@ -9,3 +9,6 @@ cdk.out/
 
 # Markdown files and records are forbidden in this repository.
 *.[mM][dD]
+
+.wrangler/
+.dev.vars*
