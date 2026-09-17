@@ -13,9 +13,10 @@ const payload = () => makeSchedulePayload({ dates: ["2026-09-18"], sessions }, n
 let pending: any[], known: Set<string>;
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(now); vi.clearAllMocks(); mocks.busy = false;
+  process.env.NOTIFICATION_SWITCH_PARAMETER = "switch";
   process.env.TABLE_NAME = "test"; process.env.ALERTS_ENABLED = "true";
   process.env.TELEGRAM_BOT_TOKEN_PARAMETER = "token"; process.env.TELEGRAM_CHAT_ID_PARAMETER = "schedule-chat";
-  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "token", Value: "fake" }, { Name: "schedule-chat", Value: "original-channel" }] });
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "true" }, { Name: "token", Value: "fake" }, { Name: "schedule-chat", Value: "original-channel" }] });
   mocks.send.mockResolvedValue(undefined);
   mocks.lease.mockImplementation(async (_table, work) => mocks.busy ? { skipped: true } : work());
   pending = []; known = new Set();
@@ -55,5 +56,21 @@ it("missing baseline is initialized without historical notifications; malformed 
   expect(await handler(payload())).toMatchObject({ baselineCreated: true, notificationsSent: 0 });
   expect(mocks.repository.markInitialized).toHaveBeenCalledOnce();
   await expect(handler({ ...payload(), hash: "bad" })).rejects.toThrow("hash");
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("muting schedule alerts still records new sessions and does not replay them when enabled", async () => {
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "false" }] });
+  expect(await handler(payload())).toMatchObject({ accepted: true, notificationsEnabled: false, newSessions: 1, notificationsSent: 0 });
+  expect(known.size).toBe(1); expect(mocks.send).not.toHaveBeenCalled();
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "true" }, { Name: "token", Value: "fake" }, { Name: "schedule-chat", Value: "original-channel" }] });
+  expect(await handler(payload())).toMatchObject({ notificationsEnabled: true, newSessions: 0, notificationsSent: 0 });
+  expect(mocks.send).not.toHaveBeenCalled();
+});
+it("muted schedule alerts discard only pending schedule notifications", async () => {
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "false" }] });
+  pending = [{ ...sessions[0], attempts: 0 }, { ...sessions[0], attempts: 0, notificationId: "SEATOPEN#x", releasedSeatLabels: ["K16"] }];
+  mocks.repository.discardNotification = vi.fn();
+  await handler(payload());
+  expect(mocks.repository.discardNotification).toHaveBeenCalledExactlyOnceWith(sessions[0].performanceId, now.toISOString());
   expect(mocks.send).not.toHaveBeenCalled();
 });

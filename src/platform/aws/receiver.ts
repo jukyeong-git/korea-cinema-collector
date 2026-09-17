@@ -1,3 +1,4 @@
+import { readNotificationSwitch } from "./notification-switch";
 import { GetParametersCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { createDynamoDbSessionRepository } from "./dynamodb-session-repository";
 import { withSyncLease } from "./sync-lease";
@@ -27,7 +28,8 @@ export async function handler(event: unknown) {
     if (process.env.ALERTS_ENABLED !== "true") throw Error("Seat receiver is disabled");
     const snapshots = new Map(payload.entries.map(e => [e.performanceId, e]));
     const currentAvailableSeats = new Map<string, string[]>();
-    const outcome = await runSeatsSync({ repository, currentAvailableSeats,
+    const notificationsEnabled = await readNotificationSwitch();
+    const outcome = await runSeatsSync({ repository, currentAvailableSeats, notificationsEnabled,
       observeSeats: async (items, notify) => { await observePreferredSeats(items, {
         loadSeatContext: async () => context,
         storeSeatObservation: async (...args) => {
@@ -43,6 +45,7 @@ export async function handler(event: unknown) {
         return snapshot;
       }, notify, now, ALL_DAYS); },
       sendNotification: async group => {
+        if (!await readNotificationSwitch()) throw Error("Notifications switched off before delivery");
         const names = [process.env.TELEGRAM_BOT_TOKEN_PARAMETER!, process.env.TELEGRAM_CHAT_ID_PARAMETER!];
         const response = await ssm.send(new GetParametersCommand({ Names: names, WithDecryption: true }));
         const values = new Map(response.Parameters?.map(p => [p.Name, p.Value]));
@@ -51,7 +54,7 @@ export async function handler(event: unknown) {
         await sendTelegramGroup(token, chat, group);
       },
     }, ready, now, ALL_DAYS);
-    return { accepted: true, hash: payload.hash, ...outcome };
+    return { accepted: true, hash: payload.hash, notificationsEnabled, ...outcome };
   }, undefined, "STATE#github_seats_lease");
   if ("skipped" in result) throw Error("Seat receiver busy; retry collection");
   return result;

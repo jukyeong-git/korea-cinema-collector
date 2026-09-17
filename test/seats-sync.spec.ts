@@ -28,3 +28,14 @@ it("weekday shards observe and deliver only their own days without discarding ot
   expect(markSent).toHaveBeenCalledWith(["SEATOPEN#monday"], expect.any(String));
   expect(discardNotification).not.toHaveBeenCalled();
 });
+it("muted seat alerts discard pending seat events without discarding schedule notifications", async () => {
+  const discardNotification = vi.fn(), sendNotification = vi.fn(), observeSeats = vi.fn();
+  const repository = { listPending: async () => [
+    { ...c, attempts: 0 },
+    { ...c, attempts: 0, notificationId: "SEATOPEN#show#1", releasedSeatLabels: ["H10"] },
+  ], discardNotification } as unknown as SessionRepository;
+  await runSeatsSync({ repository, observeSeats, sendNotification, notificationsEnabled: false }, [c]);
+  expect(observeSeats).toHaveBeenCalledWith([c], false);
+  expect(discardNotification).toHaveBeenCalledExactlyOnceWith("SEATOPEN#show#1", expect.any(String));
+  expect(sendNotification).not.toHaveBeenCalled();
+});

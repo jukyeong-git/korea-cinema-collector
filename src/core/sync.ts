@@ -60,6 +60,11 @@ export async function runSync(
 	}
 
 	if (!notificationsEnabled) {
+    for (const item of await repository.listPending()) {
+      if (item.releasedSeatLabels === undefined) {
+        await repository.discardNotification?.(item.notificationId ?? item.performanceId, timestamp);
+      }
+    }
     if (dependencies.observeSeats && seatCandidates) await dependencies.observeSeats(seatCandidates, false);
 		return {
 			baselineCreated: false,

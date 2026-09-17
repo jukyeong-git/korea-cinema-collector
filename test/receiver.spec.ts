@@ -16,9 +16,10 @@ let observations: Map<string, SeatObservation>, pending: PendingNotification[];
 const payload = () => makePayload([{ performanceId: c.performanceId, identity: seatIdentity(c), available: ["K16"] }], now);
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(now); vi.clearAllMocks(); mocks.busy = false;
+  process.env.NOTIFICATION_SWITCH_PARAMETER = "switch";
   process.env.TABLE_NAME = "test"; process.env.ALERTS_ENABLED = "true";
   process.env.TELEGRAM_BOT_TOKEN_PARAMETER = "token"; process.env.TELEGRAM_CHAT_ID_PARAMETER = "chat";
-  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "token", Value: "fake" }, { Name: "chat", Value: "fake" }] });
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "true" }, { Name: "token", Value: "fake" }, { Name: "chat", Value: "fake" }] });
   mocks.send.mockResolvedValue(undefined);
   observations = new Map([["show", { identity: seatIdentity(c), available: [], revision: 1, policy: SEAT_POLICY, observedAt: new Date(now.getTime() - 300000).toISOString() }]]);
   pending = [];
@@ -59,4 +60,13 @@ it("rejects stale schedule, partial JSON, future stored observation and concurre
 it("a busy lease is a retryable failure, never an accepted hash", async () => {
   mocks.busy = true;
   await expect(handler(payload())).rejects.toThrow("busy");
+});
+it("muting seats updates the snapshot without notifications, then resumes without replaying it", async () => {
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "false" }] });
+  expect(await handler(payload())).toMatchObject({ accepted: true, notificationsEnabled: false, notificationsSent: 0 });
+  expect(observations.get("show")!.available).toEqual(["K16"]);
+  expect(mocks.send).not.toHaveBeenCalled();
+  mocks.ssm.mockResolvedValue({ Parameters: [{ Name: "switch", Value: "true" }, { Name: "token", Value: "fake" }, { Name: "chat", Value: "fake" }] });
+  expect(await handler(payload())).toMatchObject({ notificationsEnabled: true, notificationsSent: 0 });
+  expect(mocks.send).not.toHaveBeenCalled();
 });

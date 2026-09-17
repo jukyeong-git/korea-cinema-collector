@@ -9,7 +9,14 @@ export async function runSeatsSync(deps: Omit<SyncDependencies, "fetchSessions">
   if (!deps.observeSeats) throw Error("Seat observer is required");
   candidates = candidates.filter(candidate => isPreferredShowtime(candidate, weekdays));
   await deps.observeSeats(candidates, notify);
-  if (!notify) return { notificationsSent: 0 };
+  if (!notify) {
+    for (const item of await deps.repository.listPending()) {
+      if (item.releasedSeatLabels !== undefined && isPreferredShowtime(item, weekdays)) {
+        await deps.repository.discardNotification?.(item.notificationId!, now.toISOString());
+      }
+    }
+    return { notificationsSent: 0 };
+  }
   const current = new Map(candidates.map(c => [c.performanceId, c]));
   const deliverable = [];
   for (const item of await deps.repository.listPending()) {
