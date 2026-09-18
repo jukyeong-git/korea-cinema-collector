@@ -12,7 +12,7 @@ const seatsSwitch = "/korea-cinema-alert/prod/seats-alerts-enabled";
 const scheduleSwitch = "/korea-cinema-alert/prod/schedule-alerts-enabled";
 const parameters = ["/korea-cinema-alert/prod/telegram-bot-token", "/korea-cinema-alert/prod/telegram-seats-chat-id"];
 const fn = new lambda.Function(stack, "Receiver", {
-  functionName: "korea-cinema-alert-seats", runtime: lambda.Runtime.NODEJS_22_X,
+  functionName: "korea-cinema-alert-seats-git", runtime: lambda.Runtime.NODEJS_22_X,
   architecture: lambda.Architecture.ARM_64, memorySize: 256, timeout: Duration.seconds(30),
   handler: "handler.handler", code: lambda.Code.fromAsset("dist"),
   environment: { TABLE_NAME: "korea-cinema-alert", ALERTS_ENABLED: "true",
@@ -42,7 +42,7 @@ new CfnOutput(stack, "FunctionName", { value: fn.functionName });
 
 const scheduleParameters = [parameters[0], "/korea-cinema-alert/prod/telegram-chat-id"];
 const scheduleReceiver = new lambda.Function(stack, "ScheduleReceiverTemp", {
-  functionName: "korea-cinema-alert-schedule", runtime: lambda.Runtime.NODEJS_22_X,
+  functionName: "korea-cinema-alert-schedule-git", runtime: lambda.Runtime.NODEJS_22_X,
   architecture: lambda.Architecture.ARM_64, memorySize: 256, timeout: Duration.seconds(30),
   handler: "handler.handler", code: lambda.Code.fromAsset("dist-schedule"),
   environment: { TABLE_NAME: "korea-cinema-alert", ALERTS_ENABLED: "true",

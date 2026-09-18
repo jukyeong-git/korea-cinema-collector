@@ -45,7 +45,7 @@ if (state.retryAt && state.retryAt > now.getTime()) {
       console.log("Dry run: collection validated; Lambda and state unchanged");
     } else if (payload.hash !== state.hash) {
       const result = await new LambdaClient({}).send(new InvokeCommand({
-        FunctionName: process.env.LAMBDA_FUNCTION_NAME ?? "korea-cinema-alert-seats",
+        FunctionName: process.env.LAMBDA_FUNCTION_NAME ?? "korea-cinema-alert-seats-git",
         InvocationType: "RequestResponse", Payload: Buffer.from(JSON.stringify(payload)),
       }));
       if (result.FunctionError || result.StatusCode !== 200 || !result.Payload) throw Error("Lambda invocation failed; hash not acknowledged");
