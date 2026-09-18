@@ -5,6 +5,7 @@ import { makeSchedulePayload, validateSchedulePayload } from "../../core/schedul
 const client = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 export async function publishScheduleSnapshot(tableName: string, schedule: PublishedSchedule, now = new Date(), db = client) {
+  if (schedule.failedDates?.length) return { published: false, reason: "partial schedule; previous snapshot preserved" };
   const candidates = schedule.seatCandidates;
   if (!Array.isArray(candidates)) throw Error("Missing complete seat candidates");
   // Validate sold-out as well as bookable performances before replacing the full snapshot.

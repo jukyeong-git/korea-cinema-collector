@@ -35,6 +35,8 @@ export interface SyncResult {
 }
 
 export interface PublishedSchedule {
+  failedDates?: string[];
+  retryAt?: number;
 	dates: string[];
 	sessions: CinemaSession[];
   seatCandidates?: SeatCandidate[];

@@ -77,7 +77,7 @@ export class CgvHttpError extends Error {
   }
 }
 
-export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?: () => Date } = {}): Promise<PublishedSchedule> {
+export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?: () => Date; allowPartial?: boolean } = {}): Promise<PublishedSchedule> {
   const fetcher = options.fetch ?? fetch;
   const now = options.now ?? (() => new Date());
   const today = koreaDate(now());
@@ -102,15 +102,23 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
   const batches = new Array<ReturnType<typeof parseApiSchedule>>(dates.length);
   let nextIndex = 0;
   let failed = false;
+  const failures: { date: string; error: unknown }[] = [];
   async function worker() {
     while (!failed && nextIndex < dates.length) {
       const index = nextIndex++;
       const date = dates[index];
       try {
         batches[index] = parseApiSchedule(await request("searchMovScnInfo", date.replaceAll("-", "")), date, now());
+        console.log(JSON.stringify({ event: "schedule_date_collected", date, sessions: batches[index].sessions.length }));
       } catch (error) {
-        failed = true;
-        throw error;
+        failures.push({ date, error });
+        console.warn(JSON.stringify({ event: "schedule_date_failed", date,
+          status: error instanceof CgvHttpError ? error.status : undefined,
+          error: error instanceof CgvHttpError ? "CGV HTTP error" : "Request or validation failed" }));
+        if (!options.allowPartial || (error instanceof CgvHttpError && error.status === 429)) {
+          failed = true;
+          throw error;
+        }
       }
     }
   }
@@ -118,13 +126,17 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
   // after failure or publish a partial schedule. Preserve calendar order.
   const results = await Promise.allSettled(Array.from({ length: Math.min(5, dates.length) }, worker));
   const errors = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
-  if (errors.length) {
-    const limited = errors.filter(result => result.reason instanceof CgvHttpError && result.reason.status === 429);
-    limited.sort((a, b) => (b.reason.retryAt ?? 0) - (a.reason.retryAt ?? 0));
-    throw (limited[0] ?? errors[0]).reason;
+  const successfulDates = dates.filter((_, index) => batches[index] !== undefined);
+  const limited = failures.map(f => f.error).filter((e): e is CgvHttpError => e instanceof CgvHttpError && e.status === 429);
+  limited.sort((a, b) => (b.retryAt ?? 0) - (a.retryAt ?? 0));
+  if ((!options.allowPartial && errors.length) || !successfulDates.length) {
+    throw limited[0] ?? failures[0]?.error ?? Error("No successfully collected dates");
   }
-  const sessions = batches.flatMap(batch => batch.sessions);
-  const seatCandidates = batches.flatMap(batch => batch.seatCandidates);
+  const sessions = batches.flatMap(batch => batch?.sessions ?? []);
+  const seatCandidates = batches.flatMap(batch => batch?.seatCandidates ?? []);
   if (koreaDate(now()) !== today) throw Error("CGV collection crossed midnight; refusing partial schedule");
-  return { dates, sessions, seatCandidates };
+  return { dates: successfulDates, sessions, seatCandidates,
+    ...(successfulDates.length < dates.length ? { failedDates: dates.filter(date => !successfulDates.includes(date)) } : {}),
+    ...(limited[0]?.retryAt ? { retryAt: limited[0].retryAt } : {}),
+  };
 }

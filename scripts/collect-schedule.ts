@@ -15,8 +15,8 @@ if (state.retryAt && state.retryAt > Date.now()) {
   console.log("CGV schedule cooldown active until", new Date(state.retryAt).toISOString());
 } else {
   try {
-    // Existing complete-calendar collector, with at most five simultaneous requests.
-    const schedule = await fetchApiImaxSessions();
+    // Collect verified dates independently, with at most five simultaneous requests.
+    const schedule = await fetchApiImaxSessions({ allowPartial: true });
     const observedAt = new Date();
     const payload = makeSchedulePayload(schedule, observedAt);
     if (!dryRun) {
@@ -33,7 +33,11 @@ if (state.retryAt && state.retryAt > Date.now()) {
       }
       return JSON.parse(Buffer.from(response.Payload).toString());
     }, save, dryRun);
-    console.log(JSON.stringify({ dates: payload.dates.length, sessions: payload.sessions.length, hash: payload.hash, dryRun, ...result }));
+    if (!dryRun && schedule.retryAt) {
+      const acknowledged: ScheduleState = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : state;
+      save({ ...acknowledged, retryAt: schedule.retryAt });
+    }
+    console.log(JSON.stringify({ failedDates: schedule.failedDates ?? [], dates: payload.dates.length, sessions: payload.sessions.length, hash: payload.hash, dryRun, ...result }));
   } catch (error) {
     if (!dryRun && error && typeof error === "object" && "retryAt" in error
       && typeof error.retryAt === "number" && Number.isFinite(error.retryAt)) save({ ...state, retryAt: error.retryAt });
