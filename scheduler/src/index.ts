@@ -19,10 +19,17 @@ export async function invokeLambda(env: Env, target: Target, slot: string, fetch
     body: JSON.stringify({ source: "cloudflare-scheduler", slot }),
   });
   // Sign only: no SDK retries after an ambiguous response. The next slot retries collection.
-  const response = await fetcher(request, { signal: AbortSignal.timeout(10_000) });
-  await response.body?.cancel();
-  if (response.status !== 202) throw Error(`Lambda invoke failed: HTTP ${response.status}`);
-  console.log(JSON.stringify({ event: "lambda_accepted", target, slot }));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const response = await fetcher(request, { signal: controller.signal });
+    await response.body?.cancel();
+    if (response.status !== 202) throw Error(`Lambda invoke failed: HTTP ${response.status}`);
+    console.log(JSON.stringify({ event: "lambda_accepted", target, slot }));
+  } finally {
+    // Release the timeout immediately so successful calls do not keep the DO awake.
+    clearTimeout(timer);
+  }
 }
 
 export class CinemaScheduler extends DurableObject<Env> {
