@@ -70,3 +70,20 @@ it("muting seats updates the snapshot without notifications, then resumes withou
   expect(await handler(payload())).toMatchObject({ notificationsEnabled: true, notificationsSent: 0 });
   expect(mocks.send).not.toHaveBeenCalled();
 });
+it("delivers a verified partial round without changing the failed show's observation or pending alert", async () => {
+  const other = { ...c, performanceId: "other", seatQuery: { ...c.seatQuery, scnSseq: "4" } };
+  const previous = { identity: seatIdentity(other), available: ["K17"], revision: 7, policy: SEAT_POLICY, observedAt: new Date(now.getTime() - 60000).toISOString() };
+  observations.set("other", previous);
+  const firstSeen = new Map(["show", "other"].map(id => [id, new Date(now.getTime() - 3600000).toISOString()]));
+  mocks.repository.readSeatCandidates.mockResolvedValue([c, other]);
+  mocks.repository.loadSeatContext.mockImplementation(async () => ({ firstSeen, observations }));
+  pending.push({ ...other, notificationId: "SEATOPEN#other#7", releasedSeatLabels: ["K17"], attempts: 0 });
+  mocks.repository.markSent.mockImplementation(async (ids: string[]) => { pending = pending.filter(p => !ids.includes(p.notificationId!)); });
+  expect(await handler({ ...payload(), partial: true })).toMatchObject({ accepted: true, notificationsSent: 1 });
+  expect(observations.get("other")).toEqual(previous);
+  expect(pending.map(p => p.performanceId)).toEqual(["other"]);
+  expect(mocks.repository.discardNotification).not.toHaveBeenCalled();
+  expect(mocks.repository.storeSeatObservation).toHaveBeenCalledOnce();
+  expect(await handler({ ...payload(), partial: true })).toMatchObject({ notificationsSent: 0 });
+  expect(mocks.send).toHaveBeenCalledOnce();
+});

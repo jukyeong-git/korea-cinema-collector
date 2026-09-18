@@ -18,24 +18,29 @@ if (state.retryAt && state.retryAt > now.getTime()) {
     const context = await repository.loadSeatContext(candidates.map(c => c.performanceId));
     const ready = readyCandidates(candidates, context.firstSeen, now);
     const entries: SeatEntry[] = [];
-    let next = 0, failed = false;
+    let next = 0, stopped = false;
+    const failures: { performanceId: string; retryAt?: number }[] = [];
     const deadline = AbortSignal.timeout(120_000);
     // Preserve the existing maximum of five concurrent CGV requests.
     const results = await Promise.allSettled(Array.from({ length: Math.min(5, ready.length) }, async () => {
-      while (!failed && next < ready.length) {
+      while (!stopped && next < ready.length) {
         const candidate = ready[next++];
         try { entries.push({ performanceId: candidate.performanceId, ...await fetchPreferredSeats(candidate, deadline) }); }
-        catch (error) { failed = true; throw error; }
+        catch (error) {
+          const detail = error as { status?: number; retryAt?: number };
+          failures.push({ performanceId: candidate.performanceId, retryAt: detail?.retryAt });
+          console.warn(JSON.stringify({ event: "seat_collection_failed", performanceId: candidate.performanceId,
+            date: candidate.displayDate, status: detail?.status }));
+          if (detail?.status === 429 || deadline.aborted) stopped = true;
+        }
       }
     }));
     const errors = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (errors.length) {
-      const retryAt = Math.max(0, ...errors.map(r => Number(r.reason?.retryAt) || 0));
-      if (retryAt) throw Object.assign(Error("CGV rate limited"), { retryAt });
-      throw errors[0].reason;
-    }
-    const payload = makePayload(entries, now);
-    console.log(JSON.stringify({ checked: entries.length, hash: payload.hash, changed: state.hash !== payload.hash }));
+    if (errors.length) throw errors[0].reason;
+    const retryAt = Math.max(0, ...failures.map(f => Number(f.retryAt) || 0));
+    if (ready.length && !entries.length) throw Object.assign(Error("All seat queries failed; state unchanged"), retryAt ? { retryAt } : {});
+    const payload = { ...makePayload(entries, now), ...(entries.length < ready.length ? { partial: true } : {}) };
+    console.log(JSON.stringify({ checked: entries.length, failed: failures.length, skipped: ready.length - entries.length - failures.length, partial: payload.partial === true, hash: payload.hash, changed: state.hash !== payload.hash }));
     if (process.env.DRY_RUN === "true") {
       console.log("Dry run: collection validated; Lambda and state unchanged");
     } else if (payload.hash !== state.hash) {
@@ -48,6 +53,10 @@ if (state.retryAt && state.retryAt > now.getTime()) {
       if (response.accepted !== true || response.hash !== payload.hash) throw Error("Lambda did not acknowledge this hash");
       writeFileSync(statePath, JSON.stringify({ version: 1, hash: payload.hash, observedAt: payload.observedAt }, null, 2) + "\n");
       console.log("Lambda acknowledged", JSON.stringify(response));
+    }
+    if (retryAt && process.env.DRY_RUN !== "true") {
+      const acknowledged = JSON.parse(readFileSync(statePath, "utf8"));
+      writeFileSync(statePath, JSON.stringify({ ...acknowledged, retryAt }, null, 2) + "\n");
     }
   } catch (error) {
     if (process.env.DRY_RUN !== "true" && error && typeof error === "object" && "retryAt" in error && typeof error.retryAt === "number") {

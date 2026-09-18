@@ -53,7 +53,7 @@ export async function handler(event: unknown) {
         if (!token || !chat || response.InvalidParameters?.length) throw Error("Missing Telegram configuration");
         await sendTelegramGroup(token, chat, group);
       },
-    }, ready, now, ALL_DAYS);
+    }, ready.filter(c => snapshots.has(c.performanceId)), now, ALL_DAYS);
     return { accepted: true, hash: payload.hash, notificationsEnabled, ...outcome };
   }, undefined, "STATE#github_seats_lease");
   if ("skipped" in result) throw Error("Seat receiver busy; retry collection");

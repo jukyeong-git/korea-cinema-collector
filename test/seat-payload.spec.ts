@@ -33,3 +33,12 @@ it("rejects corrupt, stale, duplicate, outside-range and partial payloads before
   expect(() => validateAgainstCandidates(makePayload([], now), [c])).toThrow("Incomplete");
   expect(() => validateAgainstCandidates(makePayload([{ ...entry, identity: "wrong" }], now), [c])).toThrow("DynamoDB");
 });
+it("allows explicit nonempty partial observations but still rejects unknown shows and wrong identities", () => {
+  const p = { ...makePayload([entry], now), partial: true };
+  expect(validatePayload(p, now)).toEqual(p);
+  expect(() => validateAgainstCandidates(p, [c, { ...c, performanceId: "other" }])).not.toThrow();
+  expect(() => validateAgainstCandidates(p, [])).toThrow("DynamoDB");
+  expect(() => validateAgainstCandidates({ ...p, entries: [{ ...entry, identity: "wrong" }] }, [c])).toThrow("DynamoDB");
+  expect(() => validatePayload({ ...makePayload([], now), partial: true }, now)).toThrow("Empty partial");
+  expect(() => validatePayload({ ...p, partial: "true" }, now)).toThrow("flag");
+});

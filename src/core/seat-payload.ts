@@ -6,6 +6,7 @@ import type { SeatCandidate, SeatSnapshot } from "./types";
 export const ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
 export interface SeatEntry extends SeatSnapshot { performanceId: string }
 export interface SeatPayload {
+  partial?: boolean;
   version: 1;
   policy: string;
   observedAt: string;
@@ -35,6 +36,8 @@ export function validatePayload(value: unknown, now = new Date()): SeatPayload {
   const age = now.getTime() - Date.parse(p.observedAt);
   if (p.version !== 1 || p.policy !== SEAT_POLICY || !Number.isFinite(age) || age < -10_000 || age > 180_000
     || !Array.isArray(p.entries) || p.entries.length > 500) throw Error("Invalid or stale seat payload");
+  if (p.partial !== undefined && typeof p.partial !== "boolean") throw Error("Invalid partial flag");
+  if (p.partial && !p.entries.length) throw Error("Empty partial observation");
   const ids = new Set<string>();
   for (const e of p.entries) {
     if (!e || typeof e.performanceId !== "string" || !e.performanceId || ids.has(e.performanceId)
@@ -52,7 +55,7 @@ export function validatePayload(value: unknown, now = new Date()): SeatPayload {
 }
 export function validateAgainstCandidates(payload: SeatPayload, ready: SeatCandidate[]) {
   const expected = new Map(ready.map(c => [c.performanceId, c]));
-  if (payload.entries.length !== expected.size) throw Error("Incomplete or changed candidate set");
+  if (!payload.partial && payload.entries.length !== expected.size) throw Error("Incomplete or changed candidate set");
   for (const e of payload.entries) {
     const c = expected.get(e.performanceId);
     if (!c || e.identity !== seatIdentity(c)) throw Error("Payload does not match current DynamoDB candidates");
