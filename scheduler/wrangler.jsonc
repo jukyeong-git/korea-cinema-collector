@@ -14,21 +14,21 @@
     "head_sampling_rate": 1
   },
   "vars": {
-    "GITHUB_REPOSITORY": "jukyeong-git/korea-cinema-collector",
-    "GITHUB_WORKFLOW": "seats.yml",
-    "GITHUB_REF": "main",
-    "ENABLED": "false",
-    "DRY_RUN": "false",
-    "SCHEDULE_ENABLED": "false",
-    "GITHUB_SCHEDULE_WORKFLOW": "schedule.yml"
+    "ENABLED": "true",
+    "SCHEDULE_ENABLED": "true",
+    "SEATS_ENABLED": "true",
+    "AWS_REGION": "ap-northeast-2"
   },
   "secrets": {
     "required": [
-      "GITHUB_TOKEN"
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY"
     ]
   },
   "triggers": {
-    "crons": []
+    "crons": [
+      "* * * * *"
+    ]
   },
   "durable_objects": {
     "bindings": [

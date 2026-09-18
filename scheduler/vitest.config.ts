@@ -5,7 +5,7 @@ export default defineConfig({
     wrangler: { configPath: "./wrangler.jsonc" },
     remoteBindings: false,
     // The latest test pool embeds workerd with this maximum supported date.
-    miniflare: { compatibilityDate: "2026-08-22", bindings: { SCHEDULE_ENABLED: "true", GITHUB_SCHEDULE_WORKFLOW: "schedule.yml", GITHUB_REF: "main", GITHUB_REPOSITORY: "jukyeong-git/korea-cinema-collector", GITHUB_WORKFLOW: "seats.yml", ENABLED: "true", DRY_RUN: "true", GITHUB_TOKEN: "test-only" } },
+    miniflare: { compatibilityDate: "2026-08-22", bindings: { SCHEDULE_ENABLED: "true", SEATS_ENABLED: "true", ENABLED: "true", AWS_REGION: "ap-northeast-2", AWS_ACCESS_KEY_ID: "test-only", AWS_SECRET_ACCESS_KEY: "test-only" } },
   })],
   test: { include: ["test/**/*.spec.ts"] },
 });

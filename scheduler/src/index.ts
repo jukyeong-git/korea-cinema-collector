@@ -1,22 +1,28 @@
 import { DurableObject } from "cloudflare:workers";
+import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
+export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04"] as const;
+export type Target = typeof targets[number];
 
-export async function dispatchWorkflow(env: Env, slot: string, fetcher: typeof fetch = fetch): Promise<void> {
-  if (!env.GITHUB_TOKEN) throw Error("Missing GitHub dispatch credential");
-  const response = await fetcher(`https://api.github.com/repos/${env.GITHUB_REPOSITORY}/actions/workflows/${env.GITHUB_WORKFLOW}/dispatches`, {
+export function enabled(env: Env, target: Target): boolean {
+  return env.ENABLED === "true" && (target === "schedule" ? env.SCHEDULE_ENABLED : env.SEATS_ENABLED) === "true";
+}
+
+export async function invokeLambda(env: Env, target: Target, slot: string, fetcher: typeof fetch = fetch): Promise<void> {
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw Error("Missing AWS invoke credential");
+  const client = new AwsClient({ accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+    service: "lambda", region: env.AWS_REGION });
+  const request = await client.sign(`https://lambda.${env.AWS_REGION}.amazonaws.com/2015-03-31/functions/korea-cinema-alert-${target}/invocations`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${env.GITHUB_TOKEN}`,
-      accept: "application/vnd.github+json", "content-type": "application/json",
-      "user-agent": "koprea-cinema-scheduler", "x-github-api-version": "2026-03-10",
-    },
-    body: JSON.stringify({ ref: env.GITHUB_REF, inputs: { dry_run: env.DRY_RUN } }),
-    signal: AbortSignal.timeout(15_000),
+    headers: { "content-type": "application/json", "x-amz-invocation-type": "Event" },
+    body: JSON.stringify({ source: "cloudflare-scheduler", slot }),
   });
+  // Sign only: no SDK retries after an ambiguous response. The next slot retries collection.
+  const response = await fetcher(request, { signal: AbortSignal.timeout(10_000) });
   await response.body?.cancel();
-  if (response.status !== 200 && response.status !== 204) throw Error(`GitHub dispatch failed: HTTP ${response.status}`);
-  console.log(JSON.stringify({ event: "github_dispatched", slot, workflow: env.GITHUB_WORKFLOW, dryRun: env.DRY_RUN === "true" }));
+  if (response.status !== 202) throw Error(`Lambda invoke failed: HTTP ${response.status}`);
+  console.log(JSON.stringify({ event: "lambda_accepted", target, slot }));
 }
 
 export class CinemaScheduler extends DurableObject<Env> {
@@ -32,18 +38,20 @@ export class CinemaScheduler extends DurableObject<Env> {
     }
     const cycle = String(Math.floor(scheduledTime / 60_000));
     this.ctx.storage.sql.exec("DELETE FROM slots WHERE expires < ?", now - 120_000);
-    // Synchronous claims deduplicate repeated cron events before external I/O.
+    // A synchronous cycle claim prevents duplicate cron delivery across awaits/restarts.
     const inserted = this.ctx.storage.sql.exec<{ id: string }>(
-      "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending') RETURNING id", `${cycle}:cron`, now, now + 60_000,
+      "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'cycle') RETURNING id", `${cycle}:cycle`, now, now + 60_000,
     ).toArray();
     if (!inserted.length) return;
-    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:alarm`, now + 30_000, now + 60_000);
-    const immediate = [`${cycle}:cron`];
-    if (this.env.SCHEDULE_ENABLED === "true") {
-      this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:schedule`, now, now + 60_000);
-      this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", `${cycle}:schedule:alarm`, now + 30_000, now + 60_000);
-      immediate.push(`${cycle}:schedule`);
+    const immediate: string[] = [];
+    for (const target of targets.filter(target => enabled(this.env, target))) {
+      for (const phase of ["cron", "alarm"] as const) {
+        const id = `${cycle}:${target}:${phase}`;
+        this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", id, now + (phase === "alarm" ? 30_000 : 0), now + 60_000);
+        if (phase === "cron") immediate.push(id);
+      }
     }
+    // Persist the alarm before any network call, so immediate failure cannot cancel it.
     await this.armNextAlarm();
     await Promise.all(immediate.map(id => this.sendSlot(id)));
   }
@@ -58,20 +66,18 @@ export class CinemaScheduler extends DurableObject<Env> {
       "UPDATE slots SET status = 'claimed' WHERE id = ? AND status = 'pending' RETURNING *", id,
     ).toArray()[0];
     if (!slot) return;
-    const isSchedule = id.endsWith(":schedule") || id.endsWith(":schedule:alarm");
-    if (Date.now() > slot.expires || this.env.ENABLED !== "true"
-      || (isSchedule && this.env.SCHEDULE_ENABLED !== "true")) {
+    const target = targets.find(target => id.split(":")[1] === target);
+    if (!target || Date.now() > slot.expires || !enabled(this.env, target)) {
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE id = ?", id); return;
     }
     try {
-      await dispatchWorkflow(isSchedule
-        ? { ...this.env, GITHUB_WORKFLOW: this.env.GITHUB_SCHEDULE_WORKFLOW } : this.env, id);
+      await invokeLambda(this.env, target, id);
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'sent' WHERE id = ?", id);
     } catch (error) {
-      // GitHub dispatch has no idempotency key. Do not replay ambiguous requests;
-      // the next scheduled slot provides a fresh attempt without duplicate runs.
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'failed' WHERE id = ?", id);
-      console.error(JSON.stringify({ event: "github_dispatch_failed", slot: id, error: error instanceof Error ? error.message : "Unknown dispatch error" }));
+      // Never log request objects or credentials from signing/network errors.
+      console.error(JSON.stringify({ event: "lambda_dispatch_failed", target, slot: id,
+        reason: error instanceof Error && /^Lambda invoke failed: HTTP \d+$/.test(error.message) ? error.message : "Invoke network or credential error" }));
     }
   }
   async alarm(): Promise<void> {
@@ -86,7 +92,7 @@ export class CinemaScheduler extends DurableObject<Env> {
 export default {
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     if (env.ENABLED !== "true") return;
-    await env.SCHEDULER.getByName(`${env.GITHUB_REPOSITORY}/${env.GITHUB_WORKFLOW}`).tick(controller.scheduledTime);
+    await env.SCHEDULER.getByName("korea-cinema-alert/aws-v1").tick(controller.scheduledTime);
   },
   fetch(): Response { return new Response("Not found", { status: 404 }); },
 } satisfies ExportedHandler<Env>;
