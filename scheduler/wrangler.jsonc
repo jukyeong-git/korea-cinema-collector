@@ -17,7 +17,7 @@
     "GITHUB_REPOSITORY": "jukyeong-git/korea-cinema-collector",
     "GITHUB_WORKFLOW": "seats.yml",
     "GITHUB_REF": "main",
-    "ENABLED": "true",
+    "ENABLED": "false",
     "DRY_RUN": "false",
     "SCHEDULE_ENABLED": "false",
     "GITHUB_SCHEDULE_WORKFLOW": "schedule.yml"
@@ -28,9 +28,7 @@
     ]
   },
   "triggers": {
-    "crons": [
-      "* * * * *"
-    ]
+    "crons": []
   },
   "durable_objects": {
     "bindings": [
