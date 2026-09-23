@@ -2,9 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
-const SCHEDULE_INTERVAL_MS = 20_000;
+const FAST_INTERVAL_MS = 20_000;
 export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
 export type Target = typeof targets[number];
+const fastTargets: readonly Target[] = ["schedule", "seats-05", "seats-06", "seats-07"];
 
 export function enabled(env: Env, target: Target): boolean {
   return env.ENABLED === "true" && (target === "schedule" ? env.SCHEDULE_ENABLED : env.SEATS_ENABLED) === "true";
@@ -41,14 +42,19 @@ export class CinemaScheduler extends DurableObject<Env> {
   }
   // Advance synchronously before network I/O: alarm retries and cron recovery
   // share this claim. Missed intervals collapse to one current invocation.
-  private claimSchedule(now: number): string | undefined {
-    this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE status = 'pending' AND id LIKE '%:schedule:%'");
-    if (!enabled(this.env, "schedule")) return;
-    const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = 'schedule'").toArray()[0];
-    if (next && next.next_due > now) return;
-    const due = Math.floor(now / SCHEDULE_INTERVAL_MS) * SCHEDULE_INTERVAL_MS;
-    this.ctx.storage.sql.exec("INSERT INTO cadence VALUES ('schedule', ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", due + SCHEDULE_INTERVAL_MS);
-    return `${due}:schedule:alarm`;
+  private claimFastTargets(now: number): { target: Target; slot: string }[] {
+    const claimed: { target: Target; slot: string }[] = [];
+    for (const target of fastTargets) {
+      // Retire pending 30-second weekend slots when upgrading the cadence.
+      this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE status = 'pending' AND id LIKE ?", `%:${target}:%`);
+      if (!enabled(this.env, target)) continue;
+      const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", target).toArray()[0];
+      if (next && next.next_due > now) continue;
+      const due = Math.floor(now / FAST_INTERVAL_MS) * FAST_INTERVAL_MS;
+      this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + FAST_INTERVAL_MS);
+      claimed.push({ target, slot: `${due}:${target}:alarm` });
+    }
+    return claimed;
   }
   async tick(scheduledTime: number): Promise<void> {
     if (this.env.ENABLED !== "true") return;
@@ -62,9 +68,9 @@ export class CinemaScheduler extends DurableObject<Env> {
     const inserted = this.ctx.storage.sql.exec<{ id: string }>(
       "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'cycle') RETURNING id", `${cycle}:cycle`, now, now + 60_000,
     ).toArray();
-    const scheduleSlot = this.claimSchedule(now);
+    const fastSlots = this.claimFastTargets(now);
     const immediate: string[] = [];
-    for (const target of targets.filter(target => inserted.length && target !== "schedule" && enabled(this.env, target))) {
+    for (const target of targets.filter(target => inserted.length && !fastTargets.includes(target) && enabled(this.env, target))) {
       for (const phase of ["cron", "alarm"] as const) {
         const id = `${cycle}:${target}:${phase}`;
         this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", id, now + (phase === "alarm" ? 30_000 : 0), now + 60_000);
@@ -75,16 +81,16 @@ export class CinemaScheduler extends DurableObject<Env> {
     await this.armNextAlarm();
     await Promise.all([
       ...immediate.map(id => this.sendSlot(id)),
-      ...(scheduleSlot ? [this.dispatch("schedule", scheduleSlot)] : []),
+      ...fastSlots.map(({ target, slot }) => this.dispatch(target, slot)),
     ]);
   }
   private async armNextAlarm(): Promise<void> {
     const next = this.ctx.storage.sql.exec<{ due: number }>(
       "SELECT due FROM slots WHERE status = 'pending' AND id LIKE '%:alarm' ORDER BY due LIMIT 1",
     ).toArray()[0];
-    const schedule = enabled(this.env, "schedule")
-      ? this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = 'schedule'").toArray()[0] : undefined;
-    const due = Math.min(next?.due ?? Infinity, schedule?.next_due ?? Infinity);
+    const fastDue = fastTargets.filter(target => enabled(this.env, target)).map(target =>
+      this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", target).toArray()[0]?.next_due ?? Infinity);
+    const due = Math.min(next?.due ?? Infinity, ...fastDue);
     if (Number.isFinite(due)) await this.ctx.storage.setAlarm(due);
     else await this.ctx.storage.deleteAlarm();
   }
@@ -113,7 +119,7 @@ export class CinemaScheduler extends DurableObject<Env> {
   }
   async alarm(): Promise<void> {
     if (this.env.ENABLED !== "true") { await this.ctx.storage.deleteAlarm(); return; }
-    const scheduleSlot = this.claimSchedule(Date.now());
+    const fastSlots = this.claimFastTargets(Date.now());
     const due = this.ctx.storage.sql.exec<Slot>(
       "SELECT * FROM slots WHERE status = 'pending' AND id LIKE '%:alarm' AND due <= ? ORDER BY due", Date.now(),
     ).toArray();
@@ -121,7 +127,7 @@ export class CinemaScheduler extends DurableObject<Env> {
     await this.armNextAlarm();
     try { await Promise.all([
       ...due.map(slot => this.sendSlot(slot.id)),
-      ...(scheduleSlot ? [this.dispatch("schedule", scheduleSlot)] : []),
+      ...fastSlots.map(({ target, slot }) => this.dispatch(target, slot)),
     ]); }
     finally { await this.armNextAlarm(); }
   }

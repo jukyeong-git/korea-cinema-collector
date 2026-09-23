@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await reset(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("calls schedule every 20s and each seat collector twice per minute", async () => {
+it("calls schedule and Friday to Sunday seats every 20s, Monday to Thursday every 30s", async () => {
   const stub = env.SCHEDULER.getByName("cadence");
   const start = clock;
   await stub.tick(start);
@@ -26,7 +26,7 @@ it("calls schedule every 20s and each seat collector twice per minute", async ()
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target}/`))).toHaveLength(target === "schedule" ? 3 : 2);
+  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target}/`))).toHaveLength(["schedule", "seats-05", "seats-06", "seats-07"].includes(target) ? 3 : 2);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
@@ -41,16 +41,16 @@ it("continues after invoke failure without retrying the same slot", async () => 
   fetcher.mockRejectedValueOnce(Error("network timeout"));
   clock += 20_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(9);
+  expect(fetcher).toHaveBeenCalledTimes(12);
   await runInDurableObject(stub, obj => obj.alarm());
-  expect(fetcher).toHaveBeenCalledTimes(9);
+  expect(fetcher).toHaveBeenCalledTimes(12);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 10_000);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
   expect(fetcher).toHaveBeenCalledTimes(16);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(17);
+  expect(fetcher).toHaveBeenCalledTimes(20);
 });
 
 it("collapses missed intervals and keeps fixed boundaries without cron", async () => {
@@ -58,7 +58,7 @@ it("collapses missed intervals and keeps fixed boundaries without cron", async (
   await stub.tick(clock);
   clock += 72_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(9);
+  expect(fetcher).toHaveBeenCalledTimes(12);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 8_000);
 });
 
@@ -69,7 +69,7 @@ it("cron repairs a missing alarm without duplicating the current slot", async ()
   await runInDurableObject(stub, (_obj, state) => state.storage.deleteAlarm());
   clock += 22_000;
   await stub.tick(start);
-  expect(fetcher).toHaveBeenCalledTimes(9);
+  expect(fetcher).toHaveBeenCalledTimes(12);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(start + 30_000);
 });
 
@@ -101,3 +101,21 @@ it.each([["true", "true", 8], ["true", "false", 1], ["false", "true", 7], ["fals
 });
 
 it("does not expose an HTTP trigger", () => { expect(worker.fetch().status).toBe(404); });
+
+
+it("retires old weekend slots and does not invoke disabled fast targets", async () => {
+  const stub = env.SCHEDULER.getByName("weekend-upgrade");
+  await runInDurableObject(stub, (_obj, state) => {
+    for (const target of ["seats-05", "seats-06", "seats-07"]) state.storage.sql.exec("INSERT INTO slots VALUES (?, ?, ?, 'pending')", `old:${target}:alarm`, clock + 30_000, clock + 60_000);
+  });
+  await stub.tick(clock);
+  expect(await runInDurableObject(stub, (_obj, state) => state.storage.sql.exec<{ count: number }>("SELECT count(*) as count FROM slots WHERE id LIKE 'old:%' AND status = 'skipped'").one().count)).toBe(3);
+  const saved = env.SEATS_ENABLED;
+  try {
+    env.SEATS_ENABLED = "false";
+    clock += 20_000;
+    await runDurableObjectAlarm(stub);
+    expect(fetcher).toHaveBeenCalledTimes(9);
+    expect((fetcher.mock.calls.at(-1)![0] as Request).url).toContain("alert-schedule/");
+  } finally { env.SEATS_ENABLED = saved; }
+});
