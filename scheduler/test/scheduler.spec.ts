@@ -12,12 +12,12 @@ beforeEach(() => {
 });
 afterEach(async () => { await reset(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("calls schedule every 10s and each seat collector twice per minute", async () => {
+it("calls schedule every 20s and each seat collector twice per minute", async () => {
   const stub = env.SCHEDULER.getByName("cadence");
   const start = clock;
   await stub.tick(start);
-  expect(fetcher).toHaveBeenCalledTimes(5);
-  for (let second = 10; second < 60; second += 10) {
+  expect(fetcher).toHaveBeenCalledTimes(8);
+  for (const second of [20, 30, 40]) {
     expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(start + second * 1000);
     clock = start + second * 1000;
     await runDurableObjectAlarm(stub);
@@ -26,28 +26,31 @@ it("calls schedule every 10s and each seat collector twice per minute", async ()
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target}/`))).toHaveLength(target === "schedule" ? 6 : 2);
+  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target}/`))).toHaveLength(target === "schedule" ? 3 : 2);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
   clock = start + 60_000;
   await Promise.all([stub.tick(clock), runInDurableObject(stub, obj => obj.alarm())]);
-  expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedule/"))).toHaveLength(7);
+  expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedule/"))).toHaveLength(4);
 });
 
 it("continues after invoke failure without retrying the same slot", async () => {
   const stub = env.SCHEDULER.getByName("failed");
   await stub.tick(clock);
   fetcher.mockRejectedValueOnce(Error("network timeout"));
-  clock += 10_000;
+  clock += 20_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(6);
+  expect(fetcher).toHaveBeenCalledTimes(9);
   await runInDurableObject(stub, obj => obj.alarm());
-  expect(fetcher).toHaveBeenCalledTimes(6);
+  expect(fetcher).toHaveBeenCalledTimes(9);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 10_000);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(7);
+  expect(fetcher).toHaveBeenCalledTimes(16);
+  clock += 10_000;
+  await runDurableObjectAlarm(stub);
+  expect(fetcher).toHaveBeenCalledTimes(17);
 });
 
 it("collapses missed intervals and keeps fixed boundaries without cron", async () => {
@@ -55,7 +58,7 @@ it("collapses missed intervals and keeps fixed boundaries without cron", async (
   await stub.tick(clock);
   clock += 72_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(6);
+  expect(fetcher).toHaveBeenCalledTimes(9);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 8_000);
 });
 
@@ -64,10 +67,10 @@ it("cron repairs a missing alarm without duplicating the current slot", async ()
   const start = clock;
   await stub.tick(start);
   await runInDurableObject(stub, (_obj, state) => state.storage.deleteAlarm());
-  clock += 12_000;
+  clock += 22_000;
   await stub.tick(start);
-  expect(fetcher).toHaveBeenCalledTimes(6);
-  expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(start + 20_000);
+  expect(fetcher).toHaveBeenCalledTimes(9);
+  expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(start + 30_000);
 });
 
 it("ignores stale cron and retires legacy schedule alarms on upgrade", async () => {
@@ -79,7 +82,7 @@ it("ignores stale cron and retires legacy schedule alarms on upgrade", async () 
   });
   await stub.tick(clock);
   await runInDurableObject(stub, obj => obj.alarm());
-  expect(fetcher).toHaveBeenCalledTimes(5);
+  expect(fetcher).toHaveBeenCalledTimes(8);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.sql.exec<{status: string}>("SELECT status FROM slots WHERE id = 'old:schedule:alarm'").one().status)).toBe("skipped");
 });
 
@@ -91,7 +94,7 @@ it("rejects missing credentials and non-202 responses without retries", async ()
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
 
-it.each([["true", "true", 5], ["true", "false", 1], ["false", "true", 4], ["false", "false", 0]])("supports independent switches %s/%s", (schedule, seats, count) => {
+it.each([["true", "true", 8], ["true", "false", 1], ["false", "true", 7], ["false", "false", 0]])("supports independent switches %s/%s", (schedule, seats, count) => {
   const config = { ...env, SCHEDULE_ENABLED: String(schedule), SEATS_ENABLED: String(seats) };
   expect(targets.filter(t => enabled(config, t))).toHaveLength(Number(count));
   expect(targets.filter(t => enabled({ ...config, ENABLED: "false" }, t))).toHaveLength(0);

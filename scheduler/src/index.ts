@@ -2,8 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
-const SCHEDULE_INTERVAL_MS = 10_000;
-export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04"] as const;
+const SCHEDULE_INTERVAL_MS = 20_000;
+export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
 export type Target = typeof targets[number];
 
 export function enabled(env: Env, target: Target): boolean {
