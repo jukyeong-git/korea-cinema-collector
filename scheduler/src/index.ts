@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
+const SCHEDULE_INTERVAL_MS = 10_000;
 export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04"] as const;
 export type Target = typeof targets[number];
 
@@ -36,6 +37,18 @@ export class CinemaScheduler extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS slots (id TEXT PRIMARY KEY, due INTEGER NOT NULL, expires INTEGER NOT NULL, status TEXT NOT NULL)");
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS cadence (target TEXT PRIMARY KEY, next_due INTEGER NOT NULL)");
+  }
+  // Advance synchronously before network I/O: alarm retries and cron recovery
+  // share this claim. Missed intervals collapse to one current invocation.
+  private claimSchedule(now: number): string | undefined {
+    this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE status = 'pending' AND id LIKE '%:schedule:%'");
+    if (!enabled(this.env, "schedule")) return;
+    const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = 'schedule'").toArray()[0];
+    if (next && next.next_due > now) return;
+    const due = Math.floor(now / SCHEDULE_INTERVAL_MS) * SCHEDULE_INTERVAL_MS;
+    this.ctx.storage.sql.exec("INSERT INTO cadence VALUES ('schedule', ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", due + SCHEDULE_INTERVAL_MS);
+    return `${due}:schedule:alarm`;
   }
   async tick(scheduledTime: number): Promise<void> {
     if (this.env.ENABLED !== "true") return;
@@ -49,9 +62,9 @@ export class CinemaScheduler extends DurableObject<Env> {
     const inserted = this.ctx.storage.sql.exec<{ id: string }>(
       "INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'cycle') RETURNING id", `${cycle}:cycle`, now, now + 60_000,
     ).toArray();
-    if (!inserted.length) return;
+    const scheduleSlot = this.claimSchedule(now);
     const immediate: string[] = [];
-    for (const target of targets.filter(target => enabled(this.env, target))) {
+    for (const target of targets.filter(target => inserted.length && target !== "schedule" && enabled(this.env, target))) {
       for (const phase of ["cron", "alarm"] as const) {
         const id = `${cycle}:${target}:${phase}`;
         this.ctx.storage.sql.exec("INSERT OR IGNORE INTO slots VALUES (?, ?, ?, 'pending')", id, now + (phase === "alarm" ? 30_000 : 0), now + 60_000);
@@ -60,13 +73,20 @@ export class CinemaScheduler extends DurableObject<Env> {
     }
     // Persist the alarm before any network call, so immediate failure cannot cancel it.
     await this.armNextAlarm();
-    await Promise.all(immediate.map(id => this.sendSlot(id)));
+    await Promise.all([
+      ...immediate.map(id => this.sendSlot(id)),
+      ...(scheduleSlot ? [this.dispatch("schedule", scheduleSlot)] : []),
+    ]);
   }
   private async armNextAlarm(): Promise<void> {
     const next = this.ctx.storage.sql.exec<{ due: number }>(
       "SELECT due FROM slots WHERE status = 'pending' AND id LIKE '%:alarm' ORDER BY due LIMIT 1",
     ).toArray()[0];
-    if (next) await this.ctx.storage.setAlarm(next.due);
+    const schedule = enabled(this.env, "schedule")
+      ? this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = 'schedule'").toArray()[0] : undefined;
+    const due = Math.min(next?.due ?? Infinity, schedule?.next_due ?? Infinity);
+    if (Number.isFinite(due)) await this.ctx.storage.setAlarm(due);
+    else await this.ctx.storage.deleteAlarm();
   }
   private async sendSlot(id: string): Promise<void> {
     const slot = this.ctx.storage.sql.exec<Slot>(
@@ -77,21 +97,32 @@ export class CinemaScheduler extends DurableObject<Env> {
     if (!target || Date.now() > slot.expires || !enabled(this.env, target)) {
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE id = ?", id); return;
     }
+    const sent = await this.dispatch(target, id);
+    this.ctx.storage.sql.exec("UPDATE slots SET status = ? WHERE id = ?", sent ? "sent" : "failed", id);
+  }
+  private async dispatch(target: Target, id: string): Promise<boolean> {
     try {
       await invokeLambda(this.env, target, id);
-      this.ctx.storage.sql.exec("UPDATE slots SET status = 'sent' WHERE id = ?", id);
+      return true;
     } catch (error) {
-      this.ctx.storage.sql.exec("UPDATE slots SET status = 'failed' WHERE id = ?", id);
       // Never log request objects or credentials from signing/network errors.
       console.error(JSON.stringify({ event: "lambda_dispatch_failed", target, slot: id,
         reason: error instanceof Error && /^Lambda invoke failed: HTTP \d+$/.test(error.message) ? error.message : "Invoke network or credential error" }));
+      return false;
     }
   }
   async alarm(): Promise<void> {
+    if (this.env.ENABLED !== "true") { await this.ctx.storage.deleteAlarm(); return; }
+    const scheduleSlot = this.claimSchedule(Date.now());
     const due = this.ctx.storage.sql.exec<Slot>(
       "SELECT * FROM slots WHERE status = 'pending' AND id LIKE '%:alarm' AND due <= ? ORDER BY due", Date.now(),
     ).toArray();
-    try { await Promise.all(due.map(slot => this.sendSlot(slot.id))); }
+    // Persist continuation before invoking AWS, including when the alarm fails.
+    await this.armNextAlarm();
+    try { await Promise.all([
+      ...due.map(slot => this.sendSlot(slot.id)),
+      ...(scheduleSlot ? [this.dispatch("schedule", scheduleSlot)] : []),
+    ]); }
     finally { await this.armNextAlarm(); }
   }
 }
