@@ -26,13 +26,13 @@ it("calls schedule and Friday to Sunday seats every 20s, Monday to Thursday ever
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target}/`))).toHaveLength(["schedule", "seats-05", "seats-06", "seats-07"].includes(target) ? 3 : 2);
+  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(["schedule", "seats-05", "seats-06", "seats-07"].includes(target) ? 3 : 2);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
   clock = start + 60_000;
   await Promise.all([stub.tick(clock), runInDurableObject(stub, obj => obj.alarm())]);
-  expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedule/"))).toHaveLength(4);
+  expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules/"))).toHaveLength(4);
 });
 
 it("continues after invoke failure without retrying the same slot", async () => {
@@ -116,6 +116,6 @@ it("retires old weekend slots and does not invoke disabled fast targets", async 
     clock += 20_000;
     await runDurableObjectAlarm(stub);
     expect(fetcher).toHaveBeenCalledTimes(9);
-    expect((fetcher.mock.calls.at(-1)![0] as Request).url).toContain("alert-schedule/");
+    expect((fetcher.mock.calls.at(-1)![0] as Request).url).toContain("alert-schedules/");
   } finally { env.SEATS_ENABLED = saved; }
 });
