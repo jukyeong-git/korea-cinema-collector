@@ -1,0 +1,26 @@
+name: korea-cinema-collector-schedule-probe
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/schedule-probe']
+    paths: ['.github/workflows/schedule-probe.yml', 'scripts/probe-schedule.ts']
+permissions:
+  contents: read
+concurrency:
+  group: schedule-probe
+  cancel-in-progress: false
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Probe without clearance cookies or delivery
+        run: node --import tsx scripts/probe-schedule.ts
