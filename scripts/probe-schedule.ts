@@ -45,15 +45,22 @@ try {
       return false;
     }
   }
-  // Eleven collections maximum, preserving the previous 1 + 10 trial budget.
+  // Bounded one-hour trial; at most 720 collections.
   // Start-to-start cadence; never overlap collections if one exceeds five seconds.
   if (throttled) process.exitCode = 1;
-  for (let index = 1; index <= 11 && !throttled; index++) {
+  const deadline = Date.now() + 60 * 60_000;
+  console.log(JSON.stringify({ event: "probe_started", deadline: new Date(deadline).toISOString(), intervalMs: 5000, maxCollections: 720 }));
+  const deadlineTimer = setTimeout(() => { void browser.close().catch(() => {}); }, 60 * 60_000);
+  try {
+  for (let index = 1; index <= 720 && !throttled && Date.now() < deadline; index++) {
     const start = Date.now();
     if (!await attempt('five-second-validation', index)) {
       process.exitCode = 1;
       break;
     }
-    if (index < 11) await sleep(Math.max(0, start + 5000 - Date.now()));
+    if (index < 720 && !throttled) await sleep(Math.max(0, Math.min(deadline, start + 5000) - Date.now()));
   }
+  } finally { clearTimeout(deadlineTimer); }
+  if (throttled) process.exitCode = 1;
+  console.log(JSON.stringify({ event: "probe_finished", stoppedOnError: throttled }));
 } finally { await browser.close(); }
