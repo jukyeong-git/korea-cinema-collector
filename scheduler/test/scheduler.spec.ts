@@ -120,21 +120,27 @@ it("retires old weekend slots and does not invoke disabled fast targets", async 
   } finally { env.SEATS_ENABLED = saved; }
 });
 
-it('dispatches hourly workflow once and defers when an earlier run is active', async () => {
+it('dispatches without delaying behind an active run; GitHub concurrency queues it', async () => {
   const { dispatchScheduleWorkflow } = await import('../src/index');
-  fetcher.mockResolvedValueOnce(Response.json({workflow_runs:[{status:'in_progress'}]}));
-  expect(await dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).toBe('busy');
-  expect(fetcher).toHaveBeenCalledTimes(1);
-  fetcher.mockResolvedValueOnce(Response.json({workflow_runs:[{status:'completed'}]}));
   fetcher.mockResolvedValueOnce(new Response(null,{status:204}));
   expect(await dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).toBe('started');
-  const [url, init] = fetcher.mock.calls[2];
-  expect(String(url)).toContain('/schedule.yml/dispatches');
-  expect(JSON.parse(init!.body as string)).toEqual({ref:'main',inputs:{dry_run:"false",duration_minutes:"60"}});
-});
-it('does not silently dispatch if GitHub run listing fails', async () => {
-  const { dispatchScheduleWorkflow } = await import('../src/index');
-  fetcher.mockResolvedValueOnce(new Response(null,{status:403}));
-  await expect(dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).rejects.toThrow('HTTP 403');
   expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(String(fetcher.mock.calls[0][0])).toContain('/schedule.yml/dispatches');
+});
+it('claims only clock hours and ignores duplicate or non-hourly deliveries', async () => {
+  const saved = env.GITHUB_SCHEDULE_ENABLED;
+  env.GITHUB_SCHEDULE_ENABLED = 'true';
+  try {
+    clock = Math.floor(clock / 3_600_000) * 3_600_000;
+    fetcher.mockImplementation(async () => new Response(null,{status:204}));
+    const stub = env.SCHEDULER.getByName('hourly');
+    await stub.hourlySchedule(clock);
+    await stub.hourlySchedule(clock);
+    clock += 60_000;
+    await stub.hourlySchedule(clock);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    clock += 3_540_000;
+    await stub.hourlySchedule(clock);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  } finally { env.GITHUB_SCHEDULE_ENABLED = saved; }
 });

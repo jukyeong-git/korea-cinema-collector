@@ -6,6 +6,7 @@ import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { fetchApiImaxSessions, CgvHttpError } from '../src/collectors/cgv-api';
 import { makeScheduleTransfer } from '../src/core/schedule-transfer';
 import { deliverTransfer } from '../src/core/transfer-delivery';
+import { retryForbidden } from '../src/core/retry-forbidden';
 import { publishScheduleSnapshot } from '../src/platform/aws/schedule-snapshot';
 
 type State = { version: 1; hash?: string; observedAt?: string; retryAt?: number };
@@ -25,8 +26,13 @@ async function main() {
   try {
     const context = await browser.newContext();
     const page = await context.newPage();
-    const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
-    if (nav && !nav.ok()) throw new CgvHttpError(nav.status(),nav.headers()['retry-after'] ?? null,'Navigation failed');
+    const deadline = Date.now() + duration * 60_000;
+    endTimer = setTimeout(() => { void browser.close().catch(()=>{}); }, duration * 60_000);
+    const report = (event: object) => console.log(JSON.stringify(event));
+    await retryForbidden(async () => {
+      const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
+      if (nav && !nav.ok()) throw new CgvHttpError(nav.status(),nav.headers()['retry-after'] ?? null,'Navigation failed');
+    }, {deadline,phase:'navigation',report});
     await sleep(5000);
     let stopped = false;
     const browserFetch: typeof fetch = async input => {
@@ -40,12 +46,15 @@ async function main() {
         return new Response(result.body,{status:result.status,headers:result.retryAfter ? {'retry-after':result.retryAfter} : {}});
       } catch (e) { stopped = true; throw e; }
     };
-    const deadline = Date.now() + duration * 60_000;
-    endTimer = setTimeout(() => { void browser.close().catch(()=>{}); }, duration * 60_000);
     let snapshotAt = 0, deliveryFailures = 0, index = 0;
     while (!stopped && Date.now() < deadline && index < duration * 4) {
       const start = Date.now(); index++;
-      const schedule = await fetchApiImaxSessions({fetch:browserFetch});
+      const schedule = await retryForbidden(async () => {
+        // fetchApiImaxSessions drains all in-flight requests before rejecting.
+        // Restart the complete observation so no failed date is published as empty.
+        stopped = false;
+        return fetchApiImaxSessions({fetch:browserFetch});
+      }, {deadline,phase:'collection',report});
       const now = new Date();
       const payload = makeScheduleTransfer(schedule,now);
       try {
