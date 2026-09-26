@@ -13,14 +13,16 @@ try {
     const response = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013', { waitUntil: 'domcontentloaded', timeout: 15_000 });
     const retryAfter = response?.headers()['retry-after'];
     console.log(JSON.stringify({ event: 'navigation', status: response?.status(), retryAfter }));
-    throttled = response?.status() === 429 || Boolean(retryAfter);
-  } catch { console.log(JSON.stringify({ event: 'navigation_incomplete' })); }
+    throttled = Boolean(response && !response.ok()) || Boolean(retryAfter);
+  } catch { throttled = true; console.log(JSON.stringify({ event: 'navigation_incomplete' })); }
   await sleep(5000);
   const browserFetch: typeof fetch = async input => {
+    if (throttled) throw Error('Probe stopped after an error');
     const result = await page.evaluate(async requestUrl => {
       const response = await fetch(requestUrl, { credentials: 'include', signal: AbortSignal.timeout(15_000) });
       return { status: response.status, body: await response.text(), retryAfter: response.headers.get('retry-after'), contentType: response.headers.get('content-type') };
     }, String(input));
+    if (result.status >= 400 || result.retryAfter) throttled = true;
     console.log(JSON.stringify({ event: 'api_response', endpoint: new URL(String(input)).pathname,
       status: result.status, contentType: result.contentType, retryAfter: result.retryAfter }));
     return new Response(result.body, { status: result.status,
@@ -39,21 +41,19 @@ try {
         status: error instanceof CgvHttpError ? error.status : undefined,
         retryAfter: error instanceof CgvHttpError ? error.retryAfter : undefined,
         error: error instanceof CgvHttpError ? 'CGV HTTP error' : 'Request or validation failed' }));
-      throttled = error instanceof CgvHttpError && (error.status === 429 || Boolean(error.retryAfter));
+      throttled = true;
       return false;
     }
   }
-  let success = false;
-  for (let index = 1; index <= 10 && !throttled; index++) {
+  // Eleven collections maximum, preserving the previous 1 + 10 trial budget.
+  // Start-to-start cadence; never overlap collections if one exceeds five seconds.
+  if (throttled) process.exitCode = 1;
+  for (let index = 1; index <= 11 && !throttled; index++) {
     const start = Date.now();
-    if (await attempt('initial', index)) { success = true; break; }
-    if (index < 10 && !throttled) await sleep(Math.max(0, start + 5000 - Date.now()));
-  }
-  if (!success) process.exitCode = 1;
-  else {
-    for (let index = 1; index <= 10 && !throttled; index++) {
-      await sleep(60_000);
-      if (!await attempt('minute-validation', index)) process.exitCode = 1;
+    if (!await attempt('five-second-validation', index)) {
+      process.exitCode = 1;
+      break;
     }
+    if (index < 11) await sleep(Math.max(0, start + 5000 - Date.now()));
   }
 } finally { await browser.close(); }
