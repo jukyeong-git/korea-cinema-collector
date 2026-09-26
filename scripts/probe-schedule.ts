@@ -45,20 +45,20 @@ try {
       return false;
     }
   }
-  // Bounded one-hour trial; at most 360 collections.
-  // Start-to-start cadence; never overlap collections if one exceeds ten seconds.
+  // Bounded one-hour trial; at most 240 collections.
+  // Start-to-start cadence; never overlap collections if one exceeds fifteen seconds.
   if (throttled) process.exitCode = 1;
   const deadline = Date.now() + 60 * 60_000;
-  console.log(JSON.stringify({ event: "probe_started", deadline: new Date(deadline).toISOString(), intervalMs: 10000, maxCollections: 360 }));
+  console.log(JSON.stringify({ event: "probe_started", deadline: new Date(deadline).toISOString(), intervalMs: 15000, maxCollections: 240 }));
   const deadlineTimer = setTimeout(() => { void browser.close().catch(() => {}); }, 60 * 60_000);
   try {
-  for (let index = 1; index <= 360 && !throttled && Date.now() < deadline; index++) {
+  for (let index = 1; index <= 240 && !throttled && Date.now() < deadline; index++) {
     const start = Date.now();
-    if (!await attempt('ten-second-validation', index)) {
+    if (!await attempt('fifteen-second-validation', index)) {
       process.exitCode = 1;
       break;
     }
-    if (index < 360 && !throttled) await sleep(Math.max(0, Math.min(deadline, start + 10000) - Date.now()));
+    if (index < 240 && !throttled) await sleep(Math.max(0, Math.min(deadline, start + 15000) - Date.now()));
   }
   } finally { clearTimeout(deadlineTimer); }
   if (throttled) process.exitCode = 1;
