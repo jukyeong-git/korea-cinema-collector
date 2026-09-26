@@ -36,7 +36,11 @@ try {
     try {
       const result = await fetchApiImaxSessions({ fetch: browserFetch });
       if (!result.seatCandidates) throw Error('Missing seat candidates');
-      const candidates = result.seatCandidates;
+      // displayDate is CGV's Korean screening date, including post-midnight shows.
+      const candidates = result.seatCandidates.filter(candidate =>
+        new Date(`${candidate.displayDate}T00:00:00Z`).getUTCDay() === 1);
+      console.log(JSON.stringify({ event: 'seat_target_selection', weekday: 'Monday',
+        allCandidates: result.seatCandidates.length, selectedCandidates: candidates.length }));
       const collected = new Map<string, string[]>();
       let next = 0;
       let firstError: unknown;
@@ -83,7 +87,7 @@ try {
   // Start-to-start cadence; never overlap collections if one exceeds fifteen seconds.
   if (throttled) process.exitCode = 1;
   const deadline = Date.now() + 60 * 60_000;
-  console.log(JSON.stringify({ event: "probe_started", deadline: new Date(deadline).toISOString(), intervalMs: 15000, maxCollections: 240 }));
+  console.log(JSON.stringify({ event: "probe_started", deadline: new Date(deadline).toISOString(), intervalMs: 15000, maxCollections: 240, weekday: "Monday" }));
   const deadlineTimer = setTimeout(() => { void browser.close().catch(() => {}); }, 60 * 60_000);
   try {
   for (let index = 1; index <= 240 && !throttled && Date.now() < deadline; index++) {
