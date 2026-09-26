@@ -12,7 +12,7 @@ concurrency:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 95
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -53,8 +53,5 @@ jobs:
         with:
           path: ~/.cache/camoufox
           key: ${{ steps.browser-cache.outputs.cache-primary-key }}
-      - name: Respect previous CGV Retry-After before probing
-        run: |
-          node --input-type=module -e 'import {setTimeout} from "node:timers/promises"; const until=Date.parse("2026-09-26T14:11:53Z"); const delay=Math.max(0,until-Date.now()); console.log(JSON.stringify({event:"previous_cooldown",waitMs:delay,notBefore:new Date(until).toISOString()})); await setTimeout(delay);'
       - name: Browser clearance and schedule probe without delivery
         run: xvfb-run -a node --import tsx scripts/probe-schedule.ts
