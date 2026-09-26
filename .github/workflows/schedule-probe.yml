@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['codex/schedule-probe']
-    paths: ['.github/workflows/schedule-probe.yml', 'scripts/probe-schedule.ts']
+    paths: ['.github/workflows/schedule-probe.yml', 'scripts/probe-schedule.ts', 'scripts/prepare-browser.ts', 'package-lock.json']
 permissions:
   contents: read
 concurrency:
@@ -22,5 +22,36 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Probe without clearance cookies or delivery
-        run: node --import tsx scripts/probe-schedule.ts
+      - name: Resolve latest compatible Camoufox release
+        id: browser-version
+        run: |
+          node --input-type=module -e 'import {CamoufoxFetcher} from "camoufox-js/dist/pkgman.js"; import {appendFileSync} from "node:fs"; const f=new CamoufoxFetcher(); await f.init(); appendFileSync(process.env.GITHUB_OUTPUT,`version=${f.verstr}\n`);'
+      - name: Restore browser runtime
+        id: browser-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/camoufox
+          key: cgv-camoufox-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.browser-version.outputs.version }}-${{ hashFiles('package-lock.json') }}
+      - name: Download browser on cache miss
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        run: |
+          npx --no-install camoufox-js fetch
+          node --input-type=module -e 'import {installedVerStr} from "camoufox-js/dist/pkgman.js"; if(installedVerStr()!==process.env.EXPECTED_VERSION) throw Error("Browser release changed during setup; rerun");'
+        env:
+          EXPECTED_VERSION: ${{ steps.browser-version.outputs.version }}
+      - name: Prepare display
+        run: |
+          if ! command -v xvfb-run >/dev/null || ! command -v xauth >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends xvfb xauth
+          fi
+      - name: Verify browser and prepare missing system libraries
+        run: xvfb-run -a node --import tsx scripts/prepare-browser.ts
+      - name: Cache prepared runtime before collection
+        if: steps.browser-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ~/.cache/camoufox
+          key: ${{ steps.browser-cache.outputs.cache-primary-key }}
+      - name: Browser clearance and schedule probe without delivery
+        run: xvfb-run -a node --import tsx scripts/probe-schedule.ts
