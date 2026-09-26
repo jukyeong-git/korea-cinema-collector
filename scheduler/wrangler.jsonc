@@ -15,14 +15,16 @@
   },
   "vars": {
     "ENABLED": "true",
-    "SCHEDULE_ENABLED": "true",
+    "SCHEDULE_ENABLED": "false",
     "SEATS_ENABLED": "true",
-    "AWS_REGION": "ap-northeast-2"
+    "AWS_REGION": "ap-northeast-2",
+    "GITHUB_SCHEDULE_ENABLED": "false"
   },
   "secrets": {
     "required": [
       "AWS_ACCESS_KEY_ID",
-      "AWS_SECRET_ACCESS_KEY"
+      "AWS_SECRET_ACCESS_KEY",
+      "GITHUB_TOKEN"
     ]
   },
   "triggers": {

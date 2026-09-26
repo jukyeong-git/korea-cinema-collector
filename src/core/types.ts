@@ -8,6 +8,7 @@ export interface CinemaSession {
 	formatCode: string;
 	subtitleCode: string | null;
 	bookingUrl: string;
+  seatQuery?: { coCd: string; siteNo: string; scnYmd: string; scnsNo: string; scnSseq: string };
 }
 
 export interface SeatCandidate extends CinemaSession {

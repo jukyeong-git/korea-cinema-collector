@@ -119,3 +119,22 @@ it("retires old weekend slots and does not invoke disabled fast targets", async 
     expect((fetcher.mock.calls.at(-1)![0] as Request).url).toContain("alert-schedules/");
   } finally { env.SEATS_ENABLED = saved; }
 });
+
+it('dispatches hourly workflow once and defers when an earlier run is active', async () => {
+  const { dispatchScheduleWorkflow } = await import('../src/index');
+  fetcher.mockResolvedValueOnce(Response.json({workflow_runs:[{status:'in_progress'}]}));
+  expect(await dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).toBe('busy');
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  fetcher.mockResolvedValueOnce(Response.json({workflow_runs:[{status:'completed'}]}));
+  fetcher.mockResolvedValueOnce(new Response(null,{status:204}));
+  expect(await dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).toBe('started');
+  const [url, init] = fetcher.mock.calls[2];
+  expect(String(url)).toContain('/schedule.yml/dispatches');
+  expect(JSON.parse(init!.body as string)).toEqual({ref:'main',inputs:{dry_run:false,duration_minutes:60}});
+});
+it('does not silently dispatch if GitHub run listing fails', async () => {
+  const { dispatchScheduleWorkflow } = await import('../src/index');
+  fetcher.mockResolvedValueOnce(new Response(null,{status:403}));
+  await expect(dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).rejects.toThrow('HTTP 403');
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

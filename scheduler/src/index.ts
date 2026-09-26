@@ -35,11 +35,43 @@ export async function invokeLambda(env: Env, target: Target, slot: string, fetch
   }
 }
 
+export async function dispatchScheduleWorkflow(env: Env, fetcher: typeof fetch = fetch): Promise<"started" | "busy"> {
+  if (!env.GITHUB_TOKEN) throw Error("Missing GitHub dispatch credential");
+  const base = "https://api.github.com/repos/jukyeong-git/korea-cinema-collector/actions/workflows/schedule.yml";
+  const headers = { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json",
+    "user-agent": "cinema-scheduler", "x-github-api-version": "2022-11-28" };
+  const active = await fetcher(`${base}/runs?branch=main&per_page=10`, { headers, signal: AbortSignal.timeout(10000) });
+  if (!active.ok) { await active.body?.cancel(); throw Error(`GitHub list HTTP ${active.status}`); }
+  const data = await active.json() as { workflow_runs?: { status: string }[] };
+  if (!Array.isArray(data.workflow_runs)) throw Error("Invalid GitHub runs response");
+  if (data.workflow_runs.some(run => run.status !== "completed")) return "busy";
+  const sent = await fetcher(`${base}/dispatches`, { method: "POST", headers: {...headers,"content-type":"application/json"},
+    body: JSON.stringify({ref:"main",inputs:{dry_run:false,duration_minutes:60}}), signal: AbortSignal.timeout(10000) });
+  await sent.body?.cancel();
+  if (sent.status !== 204) throw Error(`GitHub dispatch HTTP ${sent.status}`);
+  return "started";
+}
+
 export class CinemaScheduler extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS slots (id TEXT PRIMARY KEY, due INTEGER NOT NULL, expires INTEGER NOT NULL, status TEXT NOT NULL)");
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS cadence (target TEXT PRIMARY KEY, next_due INTEGER NOT NULL)");
+  }
+  async hourlySchedule(): Promise<void> {
+    if (this.env.ENABLED !== "true" || this.env.GITHUB_SCHEDULE_ENABLED !== "true") return;
+    const now = Date.now();
+    const next = this.ctx.storage.sql.exec<{next_due:number}>("SELECT next_due FROM cadence WHERE target = ?", "github-schedule").toArray()[0];
+    if (next && next.next_due > now) return;
+    // Reserve before awaiting GitHub; cron retries cannot dispatch the same slot twice.
+    this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", "github-schedule", now + 60_000);
+    try {
+      const result = await dispatchScheduleWorkflow(this.env);
+      this.ctx.storage.sql.exec("UPDATE cadence SET next_due = ? WHERE target = ?", now + (result === "started" ? 3_600_000 : 60_000), "github-schedule");
+      console.log(JSON.stringify({ event: "github_schedule", result }));
+    } catch (error) {
+      console.error(JSON.stringify({event:"github_schedule_failed",reason:error instanceof Error && /^GitHub (list|dispatch) HTTP \d+$/.test(error.message) ? error.message : "GitHub request failed"}));
+    }
   }
   // Advance synchronously before network I/O: alarm retries and cron recovery
   // share this claim. Missed intervals collapse to one current invocation.
@@ -137,7 +169,8 @@ export class CinemaScheduler extends DurableObject<Env> {
 export default {
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     if (env.ENABLED !== "true") return;
-    await env.SCHEDULER.getByName("korea-cinema-alert/aws-v1").tick(controller.scheduledTime);
+    const stub = env.SCHEDULER.getByName("korea-cinema-alert/aws-v1");
+    await Promise.all([stub.tick(controller.scheduledTime), stub.hourlySchedule()]);
   },
   fetch(): Response { return new Response("Not found", { status: 404 }); },
 } satisfies ExportedHandler<Env>;
