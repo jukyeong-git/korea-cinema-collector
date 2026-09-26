@@ -130,7 +130,7 @@ it('dispatches hourly workflow once and defers when an earlier run is active', a
   expect(await dispatchScheduleWorkflow({...env,GITHUB_TOKEN:'test'},fetcher)).toBe('started');
   const [url, init] = fetcher.mock.calls[2];
   expect(String(url)).toContain('/schedule.yml/dispatches');
-  expect(JSON.parse(init!.body as string)).toEqual({ref:'main',inputs:{dry_run:false,duration_minutes:60}});
+  expect(JSON.parse(init!.body as string)).toEqual({ref:'main',inputs:{dry_run:"false",duration_minutes:"60"}});
 });
 it('does not silently dispatch if GitHub run listing fails', async () => {
   const { dispatchScheduleWorkflow } = await import('../src/index');

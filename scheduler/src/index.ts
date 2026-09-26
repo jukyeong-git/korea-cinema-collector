@@ -46,7 +46,7 @@ export async function dispatchScheduleWorkflow(env: Env, fetcher: typeof fetch =
   if (!Array.isArray(data.workflow_runs)) throw Error("Invalid GitHub runs response");
   if (data.workflow_runs.some(run => run.status !== "completed")) return "busy";
   const sent = await fetcher(`${base}/dispatches`, { method: "POST", headers: {...headers,"content-type":"application/json"},
-    body: JSON.stringify({ref:"main",inputs:{dry_run:false,duration_minutes:60}}), signal: AbortSignal.timeout(10000) });
+    body: JSON.stringify({ref:"main",inputs:{dry_run:"false",duration_minutes:"60"}}), signal: AbortSignal.timeout(10000) });
   await sent.body?.cancel();
   if (sent.status !== 204) throw Error(`GitHub dispatch HTTP ${sent.status}`);
   return "started";
