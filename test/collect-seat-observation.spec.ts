@@ -17,8 +17,9 @@ it('drains in-flight calls and replaces the entire partial observation after 403
   expect(o.wait).toHaveBeenCalledWith(5000);
   expect(fetch).toHaveBeenCalledTimes(6);
 });
-it('limits persistent seat 403 to ten total attempts and nine waits',async()=>{
-  const o=options(),fetch=vi.fn().mockRejectedValue(blocked());
+it('ends persistent seat 403 when the next batch would exceed the deadline',async()=>{
+  let time=0;
+  const o={deadline:55000,now:()=>time,wait:vi.fn(async(ms:number)=>{time+=ms;})},fetch=vi.fn().mockRejectedValue(blocked());
   await expect(collectSeatObservation([1],fetch,o)).rejects.toThrow('403');
   expect(fetch).toHaveBeenCalledTimes(10);expect(o.wait).toHaveBeenCalledTimes(9);
 });
