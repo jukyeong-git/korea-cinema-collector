@@ -85,7 +85,7 @@ async function main() {
         console.error(JSON.stringify({event:'delivery_failed',index,hashAcknowledged:false}));
         if (++deliveryFailures >= 3) throw Error('Repeated delivery failure');
       }
-      if (Date.now() < deadline) await sleep(Math.max(0,Math.min(deadline,start+15_000)-Date.now()));
+      if (Date.now() < deadline) await sleep(Math.max(0,Math.min(deadline,start+5_000)-Date.now()));
     }
   } catch (error) {
     if (Date.now() < deadline) throw error;
