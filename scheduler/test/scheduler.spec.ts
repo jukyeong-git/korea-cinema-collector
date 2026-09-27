@@ -153,3 +153,12 @@ it('hourly cron dispatches Monday and schedule workflows independently', async (
   ]));
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
+it('all weekday migration flags retire direct collectors and dispatch seven independent workflows',async()=>{
+ const flags={GITHUB_SEATS01_ENABLED:'true',GITHUB_SEATS02_ENABLED:'true',GITHUB_SEATS03_ENABLED:'true',GITHUB_SEATS04_ENABLED:'true',GITHUB_SEATS05_ENABLED:'true',GITHUB_SEATS06_ENABLED:'true',GITHUB_SEATS07_ENABLED:'true'};
+ const config={...env,...flags,ENABLED:'true',SEATS_ENABLED:'true',GITHUB_SCHEDULE_ENABLED:'true',GITHUB_TOKEN:'test'};
+ for(const target of targets.filter(t=>t.startsWith('seats-')))expect(enabled(config,target)).toBe(false);
+ fetcher.mockResolvedValue(new Response(null,{status:204}));
+ await worker.scheduled({cron:'0 * * * *',scheduledTime:clock,noRetry(){}},config);
+ expect(fetcher).toHaveBeenCalledTimes(8);
+ for(const shard of ['01','02','03','04','05','06','07'])expect(fetcher.mock.calls.some(([u])=>String(u).endsWith(`/seats-${shard}.yml/dispatches`))).toBe(true);
+});

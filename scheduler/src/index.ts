@@ -7,8 +7,18 @@ export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-0
 export type Target = typeof targets[number];
 const fastTargets: readonly Target[] = ["schedule", "seats-05", "seats-06", "seats-07"];
 
+export function githubSeatEnabled(env: Env, shard: string): boolean {
+  const flags: Record<string, string> = {
+    "01": env.GITHUB_SEATS01_ENABLED, "02": env.GITHUB_SEATS02_ENABLED,
+    "03": env.GITHUB_SEATS03_ENABLED, "04": env.GITHUB_SEATS04_ENABLED,
+    "05": env.GITHUB_SEATS05_ENABLED, "06": env.GITHUB_SEATS06_ENABLED,
+    "07": env.GITHUB_SEATS07_ENABLED,
+  };
+  return flags[shard] === "true";
+}
+
 export function enabled(env: Env, target: Target): boolean {
-  if (target === "seats-01" && env.GITHUB_SEATS01_ENABLED === "true") return false;
+  if (target.startsWith("seats-") && githubSeatEnabled(env, target.slice(-2))) return false;
   return env.ENABLED === "true" && (target === "schedule" ? env.SCHEDULE_ENABLED : env.SEATS_ENABLED) === "true";
 }
 
@@ -154,7 +164,7 @@ export default {
       // Each dispatch settles independently: one failure must not suppress the other.
       const workflows = [
         ...(env.GITHUB_SCHEDULE_ENABLED === "true" ? ["schedule.yml"] : []),
-        ...(env.GITHUB_SEATS01_ENABLED === "true" ? ["seats-01.yml"] : []),
+        ...targets.filter(target => target.startsWith("seats-") && githubSeatEnabled(env, target.slice(-2))).map(target => `${target}.yml`),
       ];
       const results = await Promise.allSettled(workflows.map(async workflow => {
         const result = await dispatchScheduleWorkflow(env, fetch, workflow);

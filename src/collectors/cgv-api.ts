@@ -77,7 +77,7 @@ export class CgvHttpError extends Error {
   }
 }
 
-export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?: () => Date; allowPartial?: boolean } = {}): Promise<PublishedSchedule> {
+export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?: () => Date; allowPartial?: boolean; weekday?: number } = {}): Promise<PublishedSchedule> {
   const fetcher = options.fetch ?? fetch;
   const now = options.now ?? (() => new Date());
   const today = koreaDate(now());
@@ -96,9 +96,15 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
     if (payload.statusCode !== 0 || !Array.isArray(payload.data)) throw Error("CGV API response unsuccessful or malformed");
     return payload.data;
   }
+  if (options.weekday !== undefined && (!Number.isInteger(options.weekday) || options.weekday < 0 || options.weekday > 6)) throw Error("Invalid weekday");
   const calendar = await request("searchSiteScnscYmdListBySite");
-  const dates = [...new Set(calendar.map(value => scheduleDate(text(object(value), "scnYmd"))))];
-  if (!dates.length || dates.length > 62) throw Error("Invalid or empty CGV calendar");
+  const allDates = [...new Set(calendar.map(value => scheduleDate(text(object(value), "scnYmd"))))];
+  if (!allDates.length || allDates.length > 62) throw Error("Invalid or empty CGV calendar");
+  const dates = options.weekday === undefined ? allDates : allDates.filter(date => new Date(`${date}T00:00:00Z`).getUTCDay() === options.weekday);
+  if (!dates.length) {
+    if (koreaDate(now()) !== today) throw Error("CGV collection crossed midnight");
+    return { dates: [], sessions: [], seatCandidates: [] };
+  }
   const batches = new Array<ReturnType<typeof parseApiSchedule>>(dates.length);
   let nextIndex = 0;
   let failed = false;

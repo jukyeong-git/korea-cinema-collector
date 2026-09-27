@@ -13,8 +13,8 @@ export interface SeatPayload {
   hash: string;
   entries: SeatEntry[];
 }
-export function readyCandidates(candidates: SeatCandidate[], firstSeen: Map<string, string>, now: Date) {
-  return candidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === 1
+export function readyCandidates(candidates: SeatCandidate[], firstSeen: Map<string, string>, now: Date, weekday = 1) {
+  return candidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === weekday
     && Number.isFinite(Date.parse(firstSeen.get(c.performanceId) ?? ""))
     && Date.parse(firstSeen.get(c.performanceId)!) + SEAT_DELAY_MS <= now.getTime()
     && performanceStart(c) > now.getTime());
@@ -36,7 +36,7 @@ export function validatePayload(value: unknown, now = new Date()): SeatPayload {
   const age = now.getTime() - Date.parse(p.observedAt);
   if (p.version !== 2 || p.policy !== SEAT_POLICY || !Number.isFinite(age) || age < -10_000 || age > 180_000
     || !Array.isArray(p.entries) || p.entries.length > 500) throw Error("Invalid or stale seat payload");
-  if (p.partial === true) throw Error("Incomplete Monday snapshot");
+  if (p.partial === true) throw Error("Incomplete weekday snapshot");
   if (p.partial !== undefined && typeof p.partial !== "boolean") throw Error("Invalid partial flag");
   if (p.partial && !p.entries.length) throw Error("Empty partial observation");
   const ids = new Set<string>();
