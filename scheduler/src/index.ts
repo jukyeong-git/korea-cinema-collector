@@ -8,6 +8,7 @@ export type Target = typeof targets[number];
 const fastTargets: readonly Target[] = ["schedule", "seats-05", "seats-06", "seats-07"];
 
 export function enabled(env: Env, target: Target): boolean {
+  if (target === "seats-01" && env.GITHUB_SEATS01_ENABLED === "true") return false;
   return env.ENABLED === "true" && (target === "schedule" ? env.SCHEDULE_ENABLED : env.SEATS_ENABLED) === "true";
 }
 
@@ -35,9 +36,9 @@ export async function invokeLambda(env: Env, target: Target, slot: string, fetch
   }
 }
 
-export async function dispatchScheduleWorkflow(env: Env, fetcher: typeof fetch = fetch): Promise<"started"> {
+export async function dispatchScheduleWorkflow(env: Env, fetcher: typeof fetch = fetch, workflow = "schedule.yml"): Promise<"started"> {
   if (!env.GITHUB_TOKEN) throw Error("Missing GitHub dispatch credential");
-  const base = "https://api.github.com/repos/jukyeong-git/korea-cinema-collector/actions/workflows/schedule.yml";
+  const base = `https://api.github.com/repos/jukyeong-git/korea-cinema-collector/actions/workflows/${workflow}`;
   const headers = { authorization: `Bearer ${env.GITHUB_TOKEN}`, accept: "application/vnd.github+json",
     "user-agent": "cinema-scheduler", "x-github-api-version": "2022-11-28" };
   const sent = await fetcher(`${base}/dispatches`, { method: "POST", headers: {...headers,"content-type":"application/json"},
@@ -150,15 +151,16 @@ export default {
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     if (env.ENABLED !== "true") return;
     if (controller.cron === "0 * * * *") {
-      if (env.GITHUB_SCHEDULE_ENABLED !== "true") return;
-      // Cron owns the schedule; scheduledTime is metadata, never an execution gate.
-      try {
-        const result = await dispatchScheduleWorkflow(env);
-        console.log(JSON.stringify({event:"github_schedule",result,scheduledTime:controller.scheduledTime}));
-      } catch (error) {
-        console.error(JSON.stringify({event:"github_schedule_failed",reason:error instanceof Error && /^GitHub dispatch HTTP \d+$/.test(error.message) ? error.message : "GitHub request failed"}));
-        throw error;
-      }
+      // Each dispatch settles independently: one failure must not suppress the other.
+      const workflows = [
+        ...(env.GITHUB_SCHEDULE_ENABLED === "true" ? ["schedule.yml"] : []),
+        ...(env.GITHUB_SEATS01_ENABLED === "true" ? ["seats-01.yml"] : []),
+      ];
+      const results = await Promise.allSettled(workflows.map(async workflow => {
+        const result = await dispatchScheduleWorkflow(env, fetch, workflow);
+        console.log(JSON.stringify({event:"github_schedule",workflow,result,scheduledTime:controller.scheduledTime}));
+      }));
+      if (results.some(r => r.status === "rejected")) throw Error("GitHub hourly dispatch failed");
     } else {
       await env.SCHEDULER.getByName("korea-cinema-alert/aws-v1").tick(controller.scheduledTime);
     }

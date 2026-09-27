@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-case "${1:-}" in seats.json|schedule.json) ;; *) echo 'Unsupported state file'; exit 1;; esac
+case "${1:-}" in seats.json|schedule.json|seats-01.json) ;; *) echo 'Unsupported state file'; exit 1;; esac
 if [ ! -f "$1" ]; then exit 0; fi
 git config user.name 'github-actions[bot]'
 git config user.email '41898282+github-actions[bot]@users.noreply.github.com'

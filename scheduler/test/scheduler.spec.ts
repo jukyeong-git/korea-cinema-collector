@@ -138,3 +138,18 @@ it('dispatches every hourly cron event regardless of timestamp or prior dispatch
   await worker.scheduled({cron:'0 * * * *',scheduledTime:clock} as ScheduledController,{...config,GITHUB_SCHEDULE_ENABLED:'false'});
   expect(fetcher).toHaveBeenCalledTimes(3);
 });
+
+it('Monday GitHub switch disables only the Monday direct collector', () => {
+  const config = {...env, ENABLED:'true', SEATS_ENABLED:'true', GITHUB_SEATS01_ENABLED:'true'};
+  expect(enabled(config,'seats-01')).toBe(false);
+  expect(enabled(config,'seats-02')).toBe(true);
+  expect(enabled(config,'seats-07')).toBe(true);
+});
+it('hourly cron dispatches Monday and schedule workflows independently', async () => {
+  fetcher.mockResolvedValue(new Response(null,{status:204}));
+  await worker.scheduled({cron:'0 * * * *',scheduledTime:clock,noRetry(){}}, {...env,ENABLED:'true',GITHUB_SCHEDULE_ENABLED:'true',GITHUB_SEATS01_ENABLED:'true',GITHUB_TOKEN:'test'});
+  expect(fetcher.mock.calls.map(([url])=>String(url))).toEqual(expect.arrayContaining([
+    expect.stringContaining('/schedule.yml/dispatches'),expect.stringContaining('/seats-01.yml/dispatches'),
+  ]));
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
