@@ -127,20 +127,14 @@ it('dispatches without delaying behind an active run; GitHub concurrency queues 
   expect(fetcher).toHaveBeenCalledTimes(1);
   expect(String(fetcher.mock.calls[0][0])).toContain('/schedule.yml/dispatches');
 });
-it('claims only clock hours and ignores duplicate or non-hourly deliveries', async () => {
-  const saved = env.GITHUB_SCHEDULE_ENABLED;
-  env.GITHUB_SCHEDULE_ENABLED = 'true';
-  try {
-    clock = Math.floor(clock / 3_600_000) * 3_600_000;
-    fetcher.mockImplementation(async () => new Response(null,{status:204}));
-    const stub = env.SCHEDULER.getByName('hourly');
-    await stub.hourlySchedule(clock);
-    await stub.hourlySchedule(clock);
-    clock += 60_000;
-    await stub.hourlySchedule(clock);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    clock += 3_540_000;
-    await stub.hourlySchedule(clock);
-    expect(fetcher).toHaveBeenCalledTimes(2);
-  } finally { env.GITHUB_SCHEDULE_ENABLED = saved; }
+it('dispatches every hourly cron event regardless of timestamp or prior dispatch', async () => {
+  fetcher.mockImplementation(async () => new Response(null,{status:204}));
+  const config = {...env,GITHUB_SCHEDULE_ENABLED:'true'};
+  for (const time of [clock + 23000,clock - 600000,clock + 23000]) {
+    await worker.scheduled({cron:'0 * * * *',scheduledTime:time} as ScheduledController,config);
+  }
+  expect(fetcher).toHaveBeenCalledTimes(3);
+  expect(fetcher.mock.calls.every(([url]) => String(url).includes('/schedule.yml/dispatches'))).toBe(true);
+  await worker.scheduled({cron:'0 * * * *',scheduledTime:clock} as ScheduledController,{...config,GITHUB_SCHEDULE_ENABLED:'false'});
+  expect(fetcher).toHaveBeenCalledTimes(3);
 });

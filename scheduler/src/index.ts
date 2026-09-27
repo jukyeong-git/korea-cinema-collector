@@ -53,23 +53,6 @@ export class CinemaScheduler extends DurableObject<Env> {
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS slots (id TEXT PRIMARY KEY, due INTEGER NOT NULL, expires INTEGER NOT NULL, status TEXT NOT NULL)");
     this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS cadence (target TEXT PRIMARY KEY, next_due INTEGER NOT NULL)");
   }
-  async hourlySchedule(scheduledTime: number): Promise<void> {
-    if (this.env.ENABLED !== "true" || this.env.GITHUB_SCHEDULE_ENABLED !== "true") return;
-    const now = Date.now();
-    if (!Number.isFinite(scheduledTime) || scheduledTime % 3_600_000 !== 0
-      || scheduledTime > now + 10_000 || now - scheduledTime > 60_000) return;
-    const key = "github-schedule-hour";
-    const next = this.ctx.storage.sql.exec<{next_due:number}>("SELECT next_due FROM cadence WHERE target = ?", key).toArray()[0];
-    if (next && next.next_due > scheduledTime) return;
-    // Claim this clock hour before dispatch; duplicate cron deliveries cannot enqueue twice.
-    this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", key, scheduledTime + 3_600_000);
-    try {
-      const result = await dispatchScheduleWorkflow(this.env);
-      console.log(JSON.stringify({ event: "github_schedule", result, scheduledTime }));
-    } catch (error) {
-      console.error(JSON.stringify({event:"github_schedule_failed",reason:error instanceof Error && /^GitHub dispatch HTTP \d+$/.test(error.message) ? error.message : "GitHub request failed"}));
-    }
-  }
   // Advance synchronously before network I/O: alarm retries and cron recovery
   // share this claim. Missed intervals collapse to one current invocation.
   private claimFastTargets(now: number): { target: Target; slot: string }[] {
@@ -166,9 +149,19 @@ export class CinemaScheduler extends DurableObject<Env> {
 export default {
   async scheduled(controller: ScheduledController, env: Env): Promise<void> {
     if (env.ENABLED !== "true") return;
-    const stub = env.SCHEDULER.getByName("korea-cinema-alert/aws-v1");
-    if (controller.cron === "0 * * * *") await stub.hourlySchedule(controller.scheduledTime);
-    else await stub.tick(controller.scheduledTime);
+    if (controller.cron === "0 * * * *") {
+      if (env.GITHUB_SCHEDULE_ENABLED !== "true") return;
+      // Cron owns the schedule; scheduledTime is metadata, never an execution gate.
+      try {
+        const result = await dispatchScheduleWorkflow(env);
+        console.log(JSON.stringify({event:"github_schedule",result,scheduledTime:controller.scheduledTime}));
+      } catch (error) {
+        console.error(JSON.stringify({event:"github_schedule_failed",reason:error instanceof Error && /^GitHub dispatch HTTP \d+$/.test(error.message) ? error.message : "GitHub request failed"}));
+        throw error;
+      }
+    } else {
+      await env.SCHEDULER.getByName("korea-cinema-alert/aws-v1").tick(controller.scheduledTime);
+    }
   },
   fetch(): Response { return new Response("Not found", { status: 404 }); },
 } satisfies ExportedHandler<Env>;
