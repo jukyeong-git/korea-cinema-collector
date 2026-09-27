@@ -20,12 +20,12 @@
     "AWS_REGION": "ap-northeast-2",
     "GITHUB_SCHEDULE_ENABLED": "true",
     "GITHUB_SEATS01_ENABLED": "true",
-    "GITHUB_SEATS02_ENABLED": "false",
-    "GITHUB_SEATS03_ENABLED": "false",
-    "GITHUB_SEATS04_ENABLED": "false",
-    "GITHUB_SEATS05_ENABLED": "false",
-    "GITHUB_SEATS06_ENABLED": "false",
-    "GITHUB_SEATS07_ENABLED": "false"
+    "GITHUB_SEATS02_ENABLED": "true",
+    "GITHUB_SEATS03_ENABLED": "true",
+    "GITHUB_SEATS04_ENABLED": "true",
+    "GITHUB_SEATS05_ENABLED": "true",
+    "GITHUB_SEATS06_ENABLED": "true",
+    "GITHUB_SEATS07_ENABLED": "true"
   },
   "secrets": {
     "required": [
