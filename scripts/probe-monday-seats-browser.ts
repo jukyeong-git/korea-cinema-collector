@@ -71,9 +71,9 @@ async function main() {
       console.log(JSON.stringify({event:'seats_probe_cycle',index,weekday:weekdayName,shard,
         sessions:entries.length,dates:schedule.dates,changed:previousHash !== payload.hash,
         apiRequests:apiRequests-requestsBefore,totalApiRequests:apiRequests,
-        durationMs:Date.now()-start,intervalMs:10_000,hash:payload.hash}));
+        durationMs:Date.now()-start,intervalMs:5_000,hash:payload.hash}));
       previousHash = payload.hash;
-      if (Date.now() < deadline) await sleep(Math.max(0,Math.min(deadline,start+10_000)-Date.now()));
+      if (Date.now() < deadline) await sleep(Math.max(0,Math.min(deadline,start+5_000)-Date.now()));
     }
   } catch (error) {
     if (Date.now() < deadline) throw error;
