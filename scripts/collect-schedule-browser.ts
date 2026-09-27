@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { launchOptions } from 'camoufox-js';
-import { firefox } from 'playwright-core';
+import { firefox, type Browser } from 'playwright-core';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { fetchApiImaxSessions, CgvHttpError } from '../src/collectors/cgv-api';
 import { makeScheduleTransfer } from '../src/core/schedule-transfer';
@@ -15,19 +15,20 @@ let state: State = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'u
 if (state.version !== 1 || (state.hash !== undefined && !/^[a-f0-9]{64}$/.test(state.hash))
   || (state.retryAt !== undefined && !Number.isFinite(state.retryAt))) throw Error('Invalid collector state');
 const dryRun = process.env.DRY_RUN === 'true';
-const duration = Number(process.env.DURATION_MINUTES ?? '60');
-if (!Number.isInteger(duration) || duration < 1 || duration > 60) throw Error('Invalid duration');
+const deadline = Number(process.env.COLLECTOR_END_AT);
+if (!Number.isFinite(deadline) || deadline <= 0 || deadline > Date.now() + 59.5 * 60_000) throw Error('Invalid session deadline');
 const save = (next: State) => { state = next; writeFileSync(statePath, JSON.stringify(state) + '\n'); };
 const lambda = new LambdaClient({ maxAttempts: 1 });
 async function main() {
   if (state.retryAt && state.retryAt > Date.now()) { console.log(JSON.stringify({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()})); return; }
-  const browser = await firefox.launch({...await launchOptions({headless:false,geoip:false,locale:'ko-KR'}),timeout:60_000});
-  let endTimer: ReturnType<typeof setTimeout> | undefined;
+  if (Date.now() >= deadline) { console.log(JSON.stringify({event:'schedule_complete',reason:'deadline during setup'})); return; }
+  let browser: Browser | undefined;
+  const endTimer = setTimeout(() => { void browser?.close().catch(()=>{}); }, deadline - Date.now());
   try {
+    browser = await firefox.launch({...await launchOptions({headless:false,geoip:false,locale:'ko-KR'}),timeout:Math.min(60_000,Math.max(1,deadline-Date.now()))});
+    if (Date.now() >= deadline) return;
     const context = await browser.newContext();
     const page = await context.newPage();
-    const deadline = Date.now() + duration * 60_000;
-    endTimer = setTimeout(() => { void browser.close().catch(()=>{}); }, duration * 60_000);
     const report = (event: object) => console.log(JSON.stringify(event));
     await retryForbidden(async () => {
       const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
@@ -47,7 +48,7 @@ async function main() {
       } catch (e) { stopped = true; throw e; }
     };
     let snapshotAt = 0, deliveryFailures = 0, index = 0;
-    while (!stopped && Date.now() < deadline && index < duration * 4) {
+    while (!stopped && Date.now() < deadline) {
       const start = Date.now(); index++;
       const schedule = await retryForbidden(async () => {
         // fetchApiImaxSessions drains all in-flight requests before rejecting.
@@ -77,9 +78,12 @@ async function main() {
         console.error(JSON.stringify({event:'delivery_failed',index,hashAcknowledged:false}));
         if (++deliveryFailures >= 3) throw Error('Repeated delivery failure');
       }
-      if (index < duration*4) await sleep(Math.max(0,Math.min(deadline,start+15_000)-Date.now()));
+      if (Date.now() < deadline) await sleep(Math.max(0,Math.min(deadline,start+15_000)-Date.now()));
     }
-  } finally { if (endTimer) clearTimeout(endTimer); await browser.close(); }
+  } catch (error) {
+    if (Date.now() < deadline) throw error;
+    console.log(JSON.stringify({event:'schedule_complete',reason:'deadline'}));
+  } finally { clearTimeout(endTimer); await browser?.close(); }
 }
 try { await main(); }
 catch(error) {
