@@ -10,6 +10,7 @@ import { fetchPreferredSeats } from '../src/collectors/monday-seats';
 import { performanceStart } from '../src/core/seat-monitor';
 import { deliverTransfer } from '../src/core/transfer-delivery';
 import { retryForbidden } from '../src/core/retry-forbidden';
+import { collectSeatObservation } from '../src/core/collect-seat-observation';
 
 
 const {id: shard, weekday, name: weekdayName} = seatShard(process.env.SEAT_SHARD);
@@ -63,18 +64,10 @@ async function main() {
       if (!schedule.seatCandidates || schedule.failedDates?.length) throw Error('Incomplete schedule');
       const now = new Date();
       const candidates = schedule.seatCandidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === weekday && performanceStart(c) > now.getTime());
-      const entries: import('../src/core/monday-seat-payload').SeatEntry[] = [];
-      let next = 0;
-      const results = await Promise.allSettled(Array.from({length:Math.min(5,candidates.length)},async () => {
-        while (!stopped && next < candidates.length) {
-          const candidate = candidates[next++];
-          try { entries.push({performanceId:candidate.performanceId,...await fetchPreferredSeats(candidate,undefined,browserFetch)}); }
-          catch (error) { stopped=true; throw error; }
-        }
-      }));
-      const errors = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
-      if (errors.length) throw errors.find(r => r.reason instanceof CgvHttpError && r.reason.status === 429)?.reason ?? errors[0].reason;
-      if (stopped || entries.length !== candidates.length) throw Error('Incomplete seat observation');
+      const entries = await collectSeatObservation(candidates,
+        async candidate => ({performanceId:candidate.performanceId,
+          ...await fetchPreferredSeats(candidate,undefined,browserFetch)}),
+        {deadline,report,beforeAttempt:()=>{ stopped=false; }});
       const payload = makePayload(entries,now);
       try {
         // Refresh eligibility and retry pending notifications even when availability is unchanged.

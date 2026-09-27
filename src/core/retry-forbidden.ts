@@ -4,7 +4,7 @@ import { CgvHttpError } from '../collectors/cgv-api';
 // Ten attempts total per operation; a later 403 starts a new retry budget.
 export async function retryForbidden<T>(operation: () => Promise<T>, options: {
   deadline: number;
-  phase: 'navigation' | 'collection';
+  phase: 'navigation' | 'collection' | 'seats';
   now?: () => number;
   wait?: (ms: number) => Promise<unknown>;
   report?: (event: { event: string; phase: string; attempt: number; maxAttempts: number }) => void;
