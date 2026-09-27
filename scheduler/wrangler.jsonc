@@ -19,7 +19,7 @@
     "SEATS_ENABLED": "true",
     "AWS_REGION": "ap-northeast-2",
     "GITHUB_SCHEDULE_ENABLED": "true",
-    "GITHUB_SEATS01_ENABLED": "false"
+    "GITHUB_SEATS01_ENABLED": "true"
   },
   "secrets": {
     "required": [
