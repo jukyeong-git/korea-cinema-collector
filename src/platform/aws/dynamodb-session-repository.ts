@@ -231,7 +231,7 @@ export class DynamoDbSessionRepository implements SessionRepository, SeatMonitor
     if (!Item) return undefined;
     // A concurrent publisher can update observedAt while the read is in flight.
     const age = (now ?? Date.now()) - Date.parse(Item.observedAt);
-    if (!Number.isFinite(age) || age < 0 || age > 180_000) return undefined;
+    if (!Number.isFinite(age) || age < 0 || age > 60 * 60_000) return undefined;
     if (!Array.isArray(Item.candidates)) throw Error("Malformed stored seat candidates");
     return Item.candidates as SeatCandidate[];
   }

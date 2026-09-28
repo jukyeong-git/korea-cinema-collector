@@ -1,3 +1,4 @@
+import { annotateError } from '../core/error-details';
 import type { PublishedSchedule, SeatCandidate } from "../core/types";
 import { koreaDate, parseRows, scheduleDate } from "./cgv-model";
 
@@ -85,6 +86,8 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
   async function request(endpoint: string, day?: string): Promise<unknown[]> {
     const params = new URLSearchParams({ coCd: "A420", siteNo: "0013" });
     if (day) { params.set("scnYmd", day); params.set("rtctlScopCd", "08"); }
+    const requestStart=Date.now();
+    try {
     const response = await fetcher(`${origin}/api/v1/booking/${endpoint}?${params}`, {
       headers: { "user-agent": CGV_USER_AGENT, accept: "application/json", referer: `${origin}/cnm/movieBook/cinema` },
       signal: AbortSignal.any([deadline, AbortSignal.timeout(15_000)]),
@@ -95,6 +98,7 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
     const payload = object(JSON.parse(body));
     if (payload.statusCode !== 0 || !Array.isArray(payload.data)) throw Error("CGV API response unsuccessful or malformed");
     return payload.data;
+    } catch(error) { throw annotateError(error,{phase:day?'schedule_date':'calendar',endpoint:`/api/v1/booking/${endpoint}`,date:day,durationMs:Date.now()-requestStart}); }
   }
   if (options.weekday !== undefined && (!Number.isInteger(options.weekday) || options.weekday < 0 || options.weekday > 6)) throw Error("Invalid weekday");
   const calendar = await request("searchSiteScnscYmdListBySite");

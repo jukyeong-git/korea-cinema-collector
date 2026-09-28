@@ -55,7 +55,7 @@ jobs:
       - name: Resolve latest compatible Camoufox release
         id: browser-version
         run: |
-          node --input-type=module -e 'import {CamoufoxFetcher} from "camoufox-js/dist/pkgman.js"; import {appendFileSync} from "node:fs"; const f=new CamoufoxFetcher(); await f.init(); appendFileSync(process.env.GITHUB_OUTPUT,`version=${f.verstr}\n`);'
+          node --import tsx scripts/resolve-browser-version.ts
       - name: Restore browser runtime
         id: browser-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830

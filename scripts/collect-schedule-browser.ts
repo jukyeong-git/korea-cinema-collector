@@ -1,3 +1,5 @@
+import { retryCollection } from '../src/core/retry-collection';
+import { annotateError, checkReceiver } from '../src/core/error-details';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { launchOptions } from 'camoufox-js';
@@ -19,7 +21,9 @@ const deadline = Number(process.env.COLLECTOR_END_AT);
 if (!Number.isFinite(deadline) || deadline <= 0 || deadline > Date.now() + 59.5 * 60_000) throw Error('Invalid session deadline');
 const save = (next: State) => { state = next; writeFileSync(statePath, JSON.stringify(state) + '\n'); };
 const lambda = new LambdaClient({ maxAttempts: 1 });
+let phase = 'browser_setup';
 async function main() {
+  phase = 'browser_setup';
   if (state.retryAt && state.retryAt > Date.now()) { console.log(JSON.stringify({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()})); return; }
   if (Date.now() >= deadline) { console.log(JSON.stringify({event:'schedule_complete',reason:'deadline during setup'})); return; }
   let browser: Browser | undefined;
@@ -30,6 +34,7 @@ async function main() {
     const context = await browser.newContext();
     const page = await context.newPage();
     const report = (event: object) => console.log(JSON.stringify(event));
+    phase = 'navigation';
     await retryForbidden(async () => {
       const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
       if (nav && !nav.ok()) throw new CgvHttpError(nav.status(),nav.headers()['retry-after'] ?? null,'Navigation failed');
@@ -38,6 +43,7 @@ async function main() {
     let stopped = false;
     const browserFetch: typeof fetch = async input => {
       if (stopped) throw Error('Collection stopped');
+      const requestStart=Date.now();
       try {
         const result = await page.evaluate(async url => {
           const response = await fetch(url,{credentials:'include',signal:AbortSignal.timeout(15_000)});
@@ -45,11 +51,17 @@ async function main() {
         },String(input));
         if (result.status >= 400) stopped = true;
         return new Response(result.body,{status:result.status,headers:result.retryAfter ? {'retry-after':result.retryAfter} : {}});
-      } catch (e) { stopped = true; throw e; }
+      } catch (e) {
+        stopped = true;
+        const url=new URL(String(input));
+        throw annotateError(e,{phase,endpoint:url.pathname,date:url.searchParams.get('scnYmd') ?? undefined,
+          session:url.searchParams.get('scnSseq') ?? undefined,durationMs:Date.now()-requestStart});
+      }
     };
-    let snapshotAt = 0, deliveryFailures = 0, index = 0;
+    let snapshotAt = 0, index = 0;
     while (!stopped && Date.now() < deadline) {
       const start = Date.now(); index++;
+      phase = 'collection';
       const schedule = await retryForbidden(async () => {
         // fetchApiImaxSessions drains all in-flight requests before rejecting.
         // Restart the complete observation so no failed date is published as empty.
@@ -59,24 +71,24 @@ async function main() {
       const now = new Date();
       const payload = makeScheduleTransfer(schedule,now);
       try {
+        phase = 'delivery';
         // The seven AWS seat workers require a fresh candidate snapshot even if nothing changed.
         if (!dryRun && (Date.now()-snapshotAt >= 60_000 || state.hash !== payload.hash)) {
+          phase = 'snapshot_publish';
           await publishScheduleSnapshot(process.env.TABLE_NAME!,schedule,now);
           snapshotAt = Date.now();
         }
+        phase = 'delivery';
         const changed = await deliverTransfer(payload,state.hash,async value => {
           const response = await lambda.send(new InvokeCommand({FunctionName:process.env.RECEIVER_FUNCTION!,
             InvocationType:'RequestResponse',Payload:Buffer.from(JSON.stringify({...value,dryRun}))}));
-          if (response.FunctionError || response.StatusCode !== 200 || !response.Payload) throw Error('Receiver failed');
-          return JSON.parse(Buffer.from(response.Payload).toString());
+          return checkReceiver(response);
         },hash => save({version:1,hash,observedAt:now.toISOString()}),dryRun);
-        deliveryFailures=0;
+
         console.log(JSON.stringify({event:'schedule_cycle',index,dates:payload.dates.length,sessions:payload.sessions.length,
           changed,dryRun,durationMs:Date.now()-start,hash:payload.hash}));
-      } catch {
-        // Never print SDK exceptions, function identifiers or receiver error payloads.
-        console.error(JSON.stringify({event:'delivery_failed',index,hashAcknowledged:false}));
-        if (++deliveryFailures >= 3) throw Error('Repeated delivery failure');
+      } catch (error) {
+        throw annotateError(error,{phase});
       }
       if (Date.now() < deadline) await sleep(Math.max(0,Math.min(deadline,start+15_000)-Date.now()));
     }
@@ -85,7 +97,7 @@ async function main() {
     console.log(JSON.stringify({event:'schedule_complete',reason:'deadline'}));
   } finally { clearTimeout(endTimer); await browser?.close(); }
 }
-try { await main(); }
+try { await retryCollection(main,{deadline,phase:()=>phase,report:event=>console.log(JSON.stringify(event))}); }
 catch(error) {
   if (error instanceof CgvHttpError && error.retryAt && !dryRun) save({...state,retryAt:error.retryAt});
   console.error(JSON.stringify({event:'schedule_stopped',status:error instanceof CgvHttpError ? error.status : undefined,
