@@ -177,13 +177,11 @@ export function buildTelegramPayload(chatId: string, group: NotificationGroup) {
 	};
 }
 
-export function telegramTextLength(text: string): number {
-	return text
-		.replace(/<[^>]*>/g, "")
-		.replaceAll("&amp;", "&")
-		.replaceAll("&lt;", "<")
-		.replaceAll("&gt;", ">")
-		.length;
+// Count the complete outgoing HTML, including tags, escaped entities and URLs.
+export function telegramTextLength(text: string): number { return text.length; }
+export function withinTelegramLimits(text: string): boolean {
+  return telegramTextLength(text) <= MAX_TELEGRAM_TEXT_LENGTH
+    && (text.match(/<(?:b|code|a)(?:>|\s)/g)?.length ?? 0) <= 90;
 }
 
 function splitNotificationGroup(group: NotificationGroup): NotificationGroup[] {
@@ -192,13 +190,13 @@ function splitNotificationGroup(group: NotificationGroup): NotificationGroup[] {
   for (const session of group.sessions) {
     const candidate = { ...group, sessions: [...current, session] };
     const text = buildTelegramPayload("", candidate).text;
-    const tooLarge = telegramTextLength(text) > MAX_TELEGRAM_TEXT_LENGTH || (text.match(/<(?:b|code|a)(?:>| )/g)?.length ?? 0) > 90;
+    const tooLarge = !withinTelegramLimits(text);
     if (tooLarge && current.length) {
       result.push({ ...group, sessions: current });
       current = [session];
     } else current = candidate.sessions;
     const single = buildTelegramPayload("", { ...group, sessions: current }).text;
-    if (telegramTextLength(single) > MAX_TELEGRAM_TEXT_LENGTH) throw Error("Single notification exceeds Telegram length");
+    if (!withinTelegramLimits(single)) throw Error("Single notification exceeds Telegram message limits");
   }
   if (current.length) result.push({ ...group, sessions: current });
   return result;
@@ -210,12 +208,14 @@ export async function sendTelegramGroup(
 	group: NotificationGroup,
 	fetcher: typeof fetch = fetch,
 ): Promise<void> {
+  const payload = buildTelegramPayload(chatId, group);
+  if (!withinTelegramLimits(payload.text)) throw Error("Telegram message exceeds configured limits");
 	const response = await fetcher(
 		`https://api.telegram.org/bot${botToken}/sendMessage`,
 		{
 			method: "POST",
 			headers: { "content-type": "application/json" },
-			body: JSON.stringify(buildTelegramPayload(chatId, group)),
+			body: JSON.stringify(payload),
 			signal: AbortSignal.timeout(15_000),
 		},
 	);
