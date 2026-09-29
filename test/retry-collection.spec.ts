@@ -1,3 +1,4 @@
+import { retryForbidden } from '../src/core/retry-forbidden';
 import { expect,it,vi } from 'vitest';
 import { retryCollection } from '../src/core/retry-collection';
 import { annotateError,errorDetails,checkReceiver,StaleScheduleError } from '../src/core/error-details';
@@ -29,4 +30,28 @@ it('recognizes stale Lambda responses without exposing other receiver error bodi
  expect(()=>checkReceiver({FunctionError:'Unhandled',Payload:payload('Missing or stale DynamoDB schedule snapshot')})).toThrow(StaleScheduleError);
  expect(()=>checkReceiver({FunctionError:'Unhandled',Payload:payload('secret-account')})).toThrow('Receiver function failed');
  expect(checkReceiver({StatusCode:200,Payload:new TextEncoder().encode('{"accepted":true}')})).toEqual({accepted:true});
+});
+
+it.each(['navigation','collection','seats'] as const)('closes the exhausted session before relaunching for %s',async phase=>{
+ let time=0,session=0;const lifecycle:string[]=[];
+ const wait=vi.fn(async(ms:number)=>{time+=ms;});
+ const result=await retryCollection(async()=>{
+   const id=++session;lifecycle.push(`open${id}`);
+   try{return await retryForbidden(async()=>{if(id===1)throw new CgvHttpError(403,null,'blocked');return 'collected';},
+     {deadline:100000,now:()=>time,wait,phase});}
+   finally{lifecycle.push(`close${id}`);}
+ },{deadline:100000,now:()=>time,wait,phase:()=>phase,report:vi.fn()});
+ expect(result).toBe('collected');expect(lifecycle).toEqual(['open1','close1','open2','close2']);
+ expect(wait.mock.calls.map(([ms])=>ms)).toEqual(Array(9).fill(5000));
+});
+it('does not renew the time budget when sessions restart',async()=>{
+ let time=0,opened=0,closed=0;const deadline=50000;
+ const wait=async(ms:number)=>{time+=ms;};
+ await expect(retryCollection(async()=>{
+   opened++;
+   try{return await retryForbidden(async()=>{time+=1000;throw new CgvHttpError(403,null,'blocked');},
+     {deadline,now:()=>time,wait,phase:'navigation'});}
+   finally{closed++;}
+ },{deadline,now:()=>time,wait,phase:()=> 'navigation',report:vi.fn()})).rejects.toThrow('403');
+ expect(time).toBeLessThanOrEqual(deadline);expect(closed).toBe(opened);
 });

@@ -1,7 +1,11 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { CgvHttpError } from '../collectors/cgv-api';
 
-// Repeat ten-attempt batches until success or the overall collection deadline.
+// The owner closes the browser in finally before retryCollection starts a new one.
+export class BrowserSessionRestartError extends Error {
+  constructor(readonly phase: string) { super('Restart browser after ten forbidden attempts'); }
+}
+// Each browser session receives at most ten consecutive forbidden attempts per operation.
 export async function retryForbidden<T>(operation: () => Promise<T>, options: {
   deadline: number;
   phase: 'navigation' | 'collection' | 'seats';
@@ -18,13 +22,14 @@ export async function retryForbidden<T>(operation: () => Promise<T>, options: {
     catch (error) {
       if (!(error instanceof CgvHttpError) || error.status !== 403) throw error;
       options.report?.({event:'cgv_403_attempt_failed',phase:options.phase,attempt,maxAttempts:10,batch});
-      const delayMs = attempt === 10 ? 10000 : 5000;
-      if (now() + delayMs >= options.deadline) throw error;
       if (attempt === 10) {
-        options.report?.({event:'cgv_403_batch_wait',phase:options.phase,attempt,maxAttempts:10,batch,delayMs});
+        options.report?.({event:'cgv_403_session_exhausted',phase:options.phase,attempt,maxAttempts:10,batch});
+        throw new BrowserSessionRestartError(options.phase);
       }
+      const delayMs = 5000;
+      if (now() + delayMs >= options.deadline) throw error;
       await wait(delayMs);
-      if (attempt === 10) { attempt = 1; batch++; } else { attempt++; }
+      attempt++;
     }
   }
 }
