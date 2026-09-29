@@ -25,7 +25,22 @@ function content(schedule: PublishedSchedule, now: Date) {
     if (!c || c.movieNo !== s.movieNo || c.formatCode !== s.formatCode) throw Error('Session missing matching candidate');
     return { ...s, seatQuery: c.seatQuery };
   });
-  return { dates: base.dates, sessions, seatCandidates };
+  if (schedule.preparingSessions !== undefined && !Array.isArray(schedule.preparingSessions)) throw Error('Invalid preparing sessions');
+  const preparing = schedule.preparingSessions === undefined ? undefined : validateSchedulePayload(
+    makeSchedulePayload({ dates: schedule.dates, sessions: schedule.preparingSessions }, now), now);
+  const rawPreparing = new Map((schedule.preparingSessions ?? []).map(s => [s.performanceId, s]));
+  const preparingSessions = preparing?.sessions.map(s => {
+    if (candidates.has(s.performanceId)) throw Error('Conflicting preparation and open status');
+    const q = rawPreparing.get(s.performanceId)!.seatQuery;
+    if (!q) return s; // Never invent a missing performance number.
+    if (q.coCd !== 'A420' || q.siteNo !== '0013' || q.scnsNo !== '018'
+      || q.scnYmd !== s.displayDate.replaceAll('-', '') || typeof q.scnSseq !== 'string'
+      || !/^[1-9]\d*$/.test(q.scnSseq)) throw Error('Invalid preparing seat query');
+    return { ...s, seatQuery: { coCd: q.coCd, siteNo: q.siteNo, scnYmd: q.scnYmd, scnsNo: q.scnsNo, scnSseq: q.scnSseq } };
+  });
+  // Omit for old senders to preserve their version-2 hash during rollout.
+  return { dates: base.dates, sessions, seatCandidates,
+    ...(preparingSessions === undefined ? {} : { preparingSessions }) };
 }
 export function makeScheduleTransfer(schedule: PublishedSchedule, now = new Date()): ScheduleTransfer {
   const canonical = content(schedule, now);

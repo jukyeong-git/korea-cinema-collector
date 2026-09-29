@@ -1,5 +1,5 @@
 import { annotateError } from '../core/error-details';
-import type { PublishedSchedule, SeatCandidate } from "../core/types";
+import type { CinemaSession, PublishedSchedule, SeatCandidate } from "../core/types";
 import { koreaDate, parseRows, scheduleDate } from "./cgv-model";
 
 export const CGV_USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36";
@@ -20,6 +20,7 @@ function text(row: Row, key: string): string {
 // include controlled, started and sold-out performances.
 export function parseApiSchedule(values: unknown[], date: string, now = new Date()) {
   const seatCandidates: SeatCandidate[] = [];
+  const preparingSessions: CinemaSession[] = [];
   const movieNumbers = new Map<string, string>();
   const dayTimes: number[] = [];
   const rows = values.map(value => {
@@ -44,6 +45,15 @@ export function parseApiSchedule(values: unknown[], date: string, now = new Date
     const startsAt = Date.parse(`${date}T00:00:00+09:00`) + (Number(time.slice(0, 2)) * 60 + Number(time.slice(2))) * 60_000;
     const disabled = row.cntlYn === "Y" || startsAt <= now.getTime() || Number(seats) === 0;
     const display = { title, screen, format, time: `${time.slice(0, 2)}:${time.slice(2)}`, status: row.cntlYn === "Y" ? "예매 준비중" : "예매 가능", disabled };
+    if (row.cntlYn === "Y" && startsAt > now.getTime()) {
+      // Keep control status separate: it must not suppress the later opening alert.
+      const prepared = parseRows([{ ...display, status: "예매 가능", disabled: false }], date)[0];
+      const q = { coCd: row.coCd, siteNo: row.siteNo, scnYmd: row.scnYmd, scnsNo: row.scnsNo, scnSseq: row.scnSseq };
+      const validQuery = q.coCd === "A420" && q.siteNo === "0013" && q.scnsNo === "018"
+        && typeof q.scnSseq === "string" && /^[1-9]\d*$/.test(q.scnSseq);
+      preparingSessions.push({ ...prepared, movieNo,
+        ...(validQuery ? { seatQuery: q as SeatCandidate["seatQuery"] } : {}) });
+    }
     if (row.cntlYn === "N" && startsAt > now.getTime()) {
       const seatQuery = { coCd: text(row, "coCd"), siteNo: text(row, "siteNo"), scnYmd: text(row, "scnYmd"), scnsNo: text(row, "scnsNo"), scnSseq: text(row, "scnSseq") };
       if (seatQuery.coCd !== "A420" || seatQuery.scnsNo !== "018" || !/^\d+$/.test(seatQuery.scnSseq)) throw Error("Unexpected Yongsan IMAX seat identifiers");
@@ -57,7 +67,7 @@ export function parseApiSchedule(values: unknown[], date: string, now = new Date
   }), date);
   if (new Set(seatCandidates.map(s => s.performanceId)).size !== seatCandidates.length) throw Error("Duplicate CGV IMAX performance");
   const first = Math.min(...dayTimes), last = Math.max(...dayTimes);
-  return { sessions: sessions.map(session => ({ ...session, movieNo: movieNumbers.get(session.performanceId)! })),
+  return { preparingSessions, sessions: sessions.map(session => ({ ...session, movieNo: movieNumbers.get(session.performanceId)! })),
     seatCandidates: seatCandidates.map(candidate => ({ ...candidate,
       isDayBoundary: [first, last].includes(Number(candidate.displayTime.replace(":", ""))),
     })) };
@@ -146,6 +156,7 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
   const seatCandidates = batches.flatMap(batch => batch?.seatCandidates ?? []);
   if (koreaDate(now()) !== today) throw Error("CGV collection crossed midnight; refusing partial schedule");
   return { dates: successfulDates, sessions, seatCandidates,
+    preparingSessions: batches.flatMap(batch => batch?.preparingSessions ?? []),
     ...(successfulDates.length < dates.length ? { failedDates: dates.filter(date => !successfulDates.includes(date)) } : {}),
     ...(limited[0]?.retryAt ? { retryAt: limited[0].retryAt } : {}),
   };

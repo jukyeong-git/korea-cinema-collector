@@ -36,6 +36,7 @@ export interface SyncResult {
 }
 
 export interface PublishedSchedule {
+  preparingSessions?: CinemaSession[]; // Controlled performances, separate from opened sessions.
   failedDates?: string[];
   retryAt?: number;
 	dates: string[];
