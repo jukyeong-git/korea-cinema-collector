@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
-const FAST_INTERVAL_MS = 20_000;
+const fastInterval = (target: Target) => target === "schedule" ? 15_000 : 20_000;
 export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
 export type Target = typeof targets[number];
 const fastTargets: readonly Target[] = ["schedule", "seats-05", "seats-06", "seats-07"];
@@ -74,8 +74,9 @@ export class CinemaScheduler extends DurableObject<Env> {
       if (!enabled(this.env, target)) continue;
       const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", target).toArray()[0];
       if (next && next.next_due > now) continue;
-      const due = Math.floor(now / FAST_INTERVAL_MS) * FAST_INTERVAL_MS;
-      this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + FAST_INTERVAL_MS);
+      const interval = fastInterval(target);
+      const due = Math.floor(now / interval) * interval;
+      this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + interval);
       claimed.push({ target, slot: `${due}:${target}:alarm` });
     }
     return claimed;

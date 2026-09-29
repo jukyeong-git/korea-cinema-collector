@@ -12,12 +12,12 @@ beforeEach(() => {
 });
 afterEach(async () => { await reset(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("calls schedule and Friday to Sunday seats every 20s, Monday to Thursday every 30s", async () => {
+it("calls schedule every 15s, Friday to Sunday every 20s, Monday to Thursday every 30s", async () => {
   const stub = env.SCHEDULER.getByName("cadence");
   const start = clock;
   await stub.tick(start);
   expect(fetcher).toHaveBeenCalledTimes(8);
-  for (const second of [20, 30, 40]) {
+  for (const second of [15, 20, 30, 40, 45]) {
     expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(start + second * 1000);
     clock = start + second * 1000;
     await runDurableObjectAlarm(stub);
@@ -26,13 +26,13 @@ it("calls schedule and Friday to Sunday seats every 20s, Monday to Thursday ever
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(["schedule", "seats-05", "seats-06", "seats-07"].includes(target) ? 3 : 2);
+  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 4 : ["seats-05", "seats-06", "seats-07"].includes(target) ? 3 : 2);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
   clock = start + 60_000;
   await Promise.all([stub.tick(clock), runInDurableObject(stub, obj => obj.alarm())]);
-  expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules/"))).toHaveLength(4);
+  expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules/"))).toHaveLength(5);
 });
 
 it("continues after invoke failure without retrying the same slot", async () => {
@@ -47,7 +47,7 @@ it("continues after invoke failure without retrying the same slot", async () => 
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 10_000);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(16);
+  expect(fetcher).toHaveBeenCalledTimes(17);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
   expect(fetcher).toHaveBeenCalledTimes(20);
@@ -59,7 +59,7 @@ it("collapses missed intervals and keeps fixed boundaries without cron", async (
   clock += 72_000;
   await runDurableObjectAlarm(stub);
   expect(fetcher).toHaveBeenCalledTimes(12);
-  expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 8_000);
+  expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 3_000);
 });
 
 it("cron repairs a missing alarm without duplicating the current slot", async () => {

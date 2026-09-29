@@ -15,10 +15,10 @@
   },
   "vars": {
     "ENABLED": "true",
-    "SCHEDULE_ENABLED": "false",
+    "SCHEDULE_ENABLED": "true",
     "SEATS_ENABLED": "true",
     "AWS_REGION": "ap-northeast-2",
-    "GITHUB_SCHEDULE_ENABLED": "true",
+    "GITHUB_SCHEDULE_ENABLED": "false",
     "GITHUB_SEATS01_ENABLED": "true",
     "GITHUB_SEATS02_ENABLED": "true",
     "GITHUB_SEATS03_ENABLED": "true",
