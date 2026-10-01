@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await reset(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("calls schedule every 5s, Monday through Thursday every 60s, and Friday through Sunday every 30s", async () => {
+it("calls schedule every 5s and all seven seat workers every 60s", async () => {
   const stub = env.SCHEDULER.getByName("cadence");
   const start = clock;
   await stub.tick(start);
@@ -26,7 +26,7 @@ it("calls schedule every 5s, Monday through Thursday every 60s, and Friday throu
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 12 : ["seats-01", "seats-02", "seats-03", "seats-04"].includes(target) ? 1 : 2);
+  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 12 : 1);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
@@ -35,7 +35,7 @@ it("calls schedule every 5s, Monday through Thursday every 60s, and Friday throu
   expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules/"))).toHaveLength(13);
   for (const target of targets.filter(target => target !== "schedule")) {
     const calls = fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`alert-${target}/`));
-    expect(calls).toHaveLength(["seats-01", "seats-02", "seats-03", "seats-04"].includes(target) ? 2 : 3);
+    expect(calls).toHaveLength(2);
   }
 });
 
@@ -51,10 +51,10 @@ it("continues after invoke failure without retrying the same slot", async () => 
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 5_000);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(13);
+  expect(fetcher).toHaveBeenCalledTimes(10);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(14);
+  expect(fetcher).toHaveBeenCalledTimes(11);
 });
 
 it("collapses missed intervals and keeps fixed boundaries without cron", async () => {
