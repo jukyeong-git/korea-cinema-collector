@@ -2,7 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
-const fastInterval = (target: Target) => target === "schedule" ? 5_000 : 30_000;
+const fastInterval = (target: Target) => {
+  if (target === "schedule") return 5_000;
+  return ["seats-01", "seats-02", "seats-03", "seats-04"].includes(target) ? 60_000 : 30_000;
+};
 export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
 export type Target = typeof targets[number];
 const fastTargets: readonly Target[] = targets;
