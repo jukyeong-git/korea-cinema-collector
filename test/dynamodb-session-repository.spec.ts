@@ -292,7 +292,7 @@ describe("preferred-seat transactional outbox", () => {
     await expect(repo.loadSeatContext(["70"])).rejects.toThrow("incomplete");
   });
 });
-it("publishes a complete candidate snapshot and skips missing or stale snapshots", async () => {
+it("accepts old candidate snapshots but skips missing snapshots", async () => {
   const client = new MemoryDocumentClient();
   const repo = new DynamoDbSessionRepository(client as unknown as DynamoDBDocumentClient, "test");
   const stamp = "2026-09-10T04:00:00Z", now = Date.parse(stamp);
@@ -301,7 +301,8 @@ it("publishes a complete candidate snapshot and skips missing or stale snapshots
   expect(await repo.readSeatCandidates(now + 60000)).toEqual([]);
   expect(await repo.readSeatCandidates(now + 180001)).toEqual([]);
   expect(await repo.readSeatCandidates(now + 3_600_000)).toEqual([]);
-  expect(await repo.readSeatCandidates(now + 3_600_001)).toBeUndefined();
+  expect(await repo.readSeatCandidates(now + 3_600_001)).toEqual([]);
+  expect(await repo.readSeatCandidates(now + 86_400_000)).toEqual([]);
   client.items.set("STATE#sync_lease", { pk: "STATE#sync_lease", expiresAt: now + 1800000 });
   expect(await repo.legacyCooldownActive(now)).toBe(true);
   expect(await repo.legacyCooldownActive(now + 1800001)).toBe(false);
@@ -319,6 +320,6 @@ it("checks candidate freshness after a concurrent DynamoDB read completes", asyn
     const repo = new DynamoDbSessionRepository(client as unknown as DynamoDBDocumentClient, "test");
     expect(await repo.readSeatCandidates()).toEqual([]);
     expect(await repo.readSeatCandidates(start)).toBeUndefined();
-    expect(await repo.readSeatCandidates(start + 3_600_501)).toBeUndefined();
+    expect(await repo.readSeatCandidates(start + 3_600_501)).toEqual([]);
   } finally { vi.useRealTimers(); }
 });
