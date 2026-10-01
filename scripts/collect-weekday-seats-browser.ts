@@ -41,7 +41,10 @@ async function main() {
   let browser: Browser | undefined;
   const endTimer = setTimeout(() => { void browser?.close().catch(()=>{}); }, deadline - Date.now());
   try {
-    browser = await firefox.launch({...await launchOptions({headless:false,geoip:false,locale:'ko-KR'}),timeout:Math.min(60_000,Math.max(1,deadline-Date.now()))});
+    const browserOptions = {headless:false,geoip:shard === '01',locale:'ko-KR',
+      ...(shard === '01' ? {humanize:true,disable_coop:true} : {})};
+    console.log(JSON.stringify({event:'browser_options',shard,...browserOptions}));
+    browser = await firefox.launch({...await launchOptions(browserOptions),timeout:Math.min(60_000,Math.max(1,deadline-Date.now()))});
     if (Date.now() >= deadline) return;
     const context = await browser.newContext();
     const page = await context.newPage();
