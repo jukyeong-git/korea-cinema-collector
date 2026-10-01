@@ -17,7 +17,7 @@
     "ENABLED": "true",
     "SCHEDULE_ENABLED": "true",
     "SEATS_ENABLED": "true",
-    "AWS_SEATS01_ENABLED": "false",
+    "AWS_SEATS01_ENABLED": "true",
     "AWS_REGION": "ap-northeast-2",
     "GITHUB_SCHEDULE_ENABLED": "false",
     "GITHUB_SEATS01_ENABLED": "false",
