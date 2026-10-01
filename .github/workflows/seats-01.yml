@@ -82,7 +82,7 @@ jobs:
         with:
           path: ~/.cache/camoufox
           key: ${{ steps.browser-cache.outputs.cache-primary-key }}
-      - name: Authenticate receiver access
+      - name: Authenticate stored schedule and receiver access
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a
         with:
           mask-aws-account-id: true
@@ -90,10 +90,12 @@ jobs:
           aws-region: ${{ secrets.SEATS01_AWS_REGION }}
           role-session-name: seats-01-${{ github.run_id }}
           role-duration-seconds: 7200
-      - name: Collect in browser and deliver changed JSON
+      - name: Read stored Monday schedule, collect seats, and deliver changed JSON
         env:
           RECEIVER_FUNCTION: ${{ secrets.SEATS01_RECEIVER_FUNCTION }}
           SEAT_SHARD: "01"
+          SEAT_SCHEDULE_SOURCE: dynamodb
+          TABLE_NAME: korea-cinema-alert
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           STATE_PATH: state/seats-01.json
         run: xvfb-run -a node --import tsx scripts/collect-weekday-seats-browser.ts

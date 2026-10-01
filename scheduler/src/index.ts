@@ -2,10 +2,10 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
-const fastInterval = (target: Target) => target === "schedule" ? 5_000 : 20_000;
+const fastInterval = (target: Target) => target === "schedule" ? 5_000 : 30_000;
 export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
 export type Target = typeof targets[number];
-const fastTargets: readonly Target[] = ["schedule", "seats-05", "seats-06", "seats-07"];
+const fastTargets: readonly Target[] = targets;
 
 export function githubSeatEnabled(env: Env, shard: string): boolean {
   const flags: Record<string, string> = {
@@ -18,6 +18,7 @@ export function githubSeatEnabled(env: Env, shard: string): boolean {
 }
 
 export function enabled(env: Env, target: Target): boolean {
+  if (target === "seats-01" && env.AWS_SEATS01_ENABLED === "false") return false;
   if (target.startsWith("seats-") && githubSeatEnabled(env, target.slice(-2))) return false;
   return env.ENABLED === "true" && (target === "schedule" ? env.SCHEDULE_ENABLED : env.SEATS_ENABLED) === "true";
 }
@@ -69,7 +70,7 @@ export class CinemaScheduler extends DurableObject<Env> {
   private claimFastTargets(now: number): { target: Target; slot: string }[] {
     const claimed: { target: Target; slot: string }[] = [];
     for (const target of fastTargets) {
-      // Retire pending 30-second weekend slots when upgrading the cadence.
+      // Retire legacy cron/alarm slots before claiming a single cadence per target.
       this.ctx.storage.sql.exec("UPDATE slots SET status = 'skipped' WHERE status = 'pending' AND id LIKE ?", `%:${target}:%`);
       if (!enabled(this.env, target)) continue;
       const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", target).toArray()[0];

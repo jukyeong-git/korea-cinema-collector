@@ -13,9 +13,16 @@ import { performanceStart } from '../src/core/seat-monitor';
 import { deliverTransfer } from '../src/core/transfer-delivery';
 import { retryForbidden } from '../src/core/retry-forbidden';
 import { collectSeatObservation } from '../src/core/collect-seat-observation';
+import { readStoredSeatPlan } from '../src/core/stored-seat-plan';
+import { createDynamoDbSessionRepository } from '../src/platform/aws/dynamodb-session-repository';
+import type { SeatCandidate } from '../src/core/types';
 
 
 const {id: shard, weekday, name: weekdayName} = seatShard(process.env.SEAT_SHARD);
+const scheduleSource = process.env.SEAT_SCHEDULE_SOURCE ?? 'cgv';
+if (!['cgv', 'dynamodb'].includes(scheduleSource)) throw Error('Invalid seat schedule source');
+if (scheduleSource === 'dynamodb' && !process.env.TABLE_NAME) throw Error('TABLE_NAME is required for stored schedules');
+const repository = scheduleSource === 'dynamodb' ? createDynamoDbSessionRepository(process.env.TABLE_NAME!) : undefined;
 type State = { version: 1; hash?: string; observedAt?: string; retryAt?: number };
 const statePath = process.env.STATE_PATH ?? `state/seats-${shard}.json`;
 let state: State = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {version:1};
@@ -66,16 +73,26 @@ async function main() {
     let deliveredAt = 0, index = 0;
     while (!stopped && Date.now() < deadline) {
       const start = Date.now(); index++;
-      phase = 'collection';
-      const schedule = await retryForbidden(async () => {
-        // fetchApiImaxSessions drains all in-flight requests before rejecting.
-        // Restart the complete observation so no failed date is published as empty.
-        stopped = false;
-        return fetchApiImaxSessions({fetch:browserFetch,weekday});
-      }, {deadline,phase:'collection',report});
-      if (!schedule.seatCandidates || schedule.failedDates?.length) throw Error('Incomplete schedule');
-      const now = new Date();
-      const candidates = schedule.seatCandidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === weekday && performanceStart(c) > now.getTime());
+      let now = new Date();
+      let candidates: SeatCandidate[];
+      if (repository) {
+        phase = 'stored_schedule';
+        const plan = await readStoredSeatPlan(repository, weekday, now);
+        candidates = plan.candidates;
+        console.log(JSON.stringify({event:'seat_collection_plan',source:'dynamodb',shard,weekday:weekdayName,
+          dates:plan.dates,candidates:candidates.length}));
+      } else {
+        phase = 'collection';
+        const schedule = await retryForbidden(async () => {
+          // fetchApiImaxSessions drains all in-flight requests before rejecting.
+          // Restart the complete observation so no failed date is published as empty.
+          stopped = false;
+          return fetchApiImaxSessions({fetch:browserFetch,weekday});
+        }, {deadline,phase:'collection',report});
+        if (!schedule.seatCandidates || schedule.failedDates?.length) throw Error('Incomplete schedule');
+        now = new Date();
+        candidates = schedule.seatCandidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === weekday && performanceStart(c) > now.getTime());
+      }
       phase = 'seats';
       const entries = await collectSeatObservation(candidates,
         async candidate => {

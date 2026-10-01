@@ -5,7 +5,7 @@ export default defineConfig({
     wrangler: { configPath: "./wrangler.jsonc" },
     remoteBindings: false,
     // The latest test pool embeds workerd with this maximum supported date.
-    miniflare: { compatibilityDate: "2026-08-22", bindings: { SCHEDULE_ENABLED: "true", GITHUB_SCHEDULE_ENABLED: "false", GITHUB_SEATS01_ENABLED: "false", GITHUB_SEATS02_ENABLED: "false", GITHUB_SEATS03_ENABLED: "false", GITHUB_SEATS04_ENABLED: "false", GITHUB_SEATS05_ENABLED: "false", GITHUB_SEATS06_ENABLED: "false", GITHUB_SEATS07_ENABLED: "false", GITHUB_TOKEN: "test-token", SEATS_ENABLED: "true", ENABLED: "true", AWS_REGION: "ap-northeast-2", AWS_ACCESS_KEY_ID: "test-only", AWS_SECRET_ACCESS_KEY: "test-only" } },
+    miniflare: { compatibilityDate: "2026-08-22", bindings: { AWS_SEATS01_ENABLED: "true", SCHEDULE_ENABLED: "true", GITHUB_SCHEDULE_ENABLED: "false", GITHUB_SEATS01_ENABLED: "false", GITHUB_SEATS02_ENABLED: "false", GITHUB_SEATS03_ENABLED: "false", GITHUB_SEATS04_ENABLED: "false", GITHUB_SEATS05_ENABLED: "false", GITHUB_SEATS06_ENABLED: "false", GITHUB_SEATS07_ENABLED: "false", GITHUB_TOKEN: "test-token", SEATS_ENABLED: "true", ENABLED: "true", AWS_REGION: "ap-northeast-2", AWS_ACCESS_KEY_ID: "test-only", AWS_SECRET_ACCESS_KEY: "test-only" } },
   })],
   test: { include: ["test/**/*.spec.ts"] },
 });

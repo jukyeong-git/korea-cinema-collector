@@ -12,7 +12,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await reset(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("calls schedule every 5s, Friday to Sunday every 20s, Monday to Thursday every 30s", async () => {
+it("calls schedule every 5s and all seven seat workers every 30s", async () => {
   const stub = env.SCHEDULER.getByName("cadence");
   const start = clock;
   await stub.tick(start);
@@ -26,7 +26,7 @@ it("calls schedule every 5s, Friday to Sunday every 20s, Monday to Thursday ever
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 12 : ["seats-05", "seats-06", "seats-07"].includes(target) ? 3 : 2);
+  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 12 : 2);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
@@ -41,16 +41,16 @@ it("continues after invoke failure without retrying the same slot", async () => 
   fetcher.mockRejectedValueOnce(Error("network timeout"));
   clock += 20_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(12);
+  expect(fetcher).toHaveBeenCalledTimes(9);
   await runInDurableObject(stub, obj => obj.alarm());
-  expect(fetcher).toHaveBeenCalledTimes(12);
+  expect(fetcher).toHaveBeenCalledTimes(9);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 5_000);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
   expect(fetcher).toHaveBeenCalledTimes(17);
   clock += 10_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(21);
+  expect(fetcher).toHaveBeenCalledTimes(18);
 });
 
 it("collapses missed intervals and keeps fixed boundaries without cron", async () => {
@@ -58,7 +58,7 @@ it("collapses missed intervals and keeps fixed boundaries without cron", async (
   await stub.tick(clock);
   clock += 72_000;
   await runDurableObjectAlarm(stub);
-  expect(fetcher).toHaveBeenCalledTimes(12);
+  expect(fetcher).toHaveBeenCalledTimes(16);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(clock + 3_000);
 });
 
@@ -69,7 +69,7 @@ it("cron repairs a missing alarm without duplicating the current slot", async ()
   await runInDurableObject(stub, (_obj, state) => state.storage.deleteAlarm());
   clock += 22_000;
   await stub.tick(start);
-  expect(fetcher).toHaveBeenCalledTimes(12);
+  expect(fetcher).toHaveBeenCalledTimes(9);
   expect(await runInDurableObject(stub, (_obj, state) => state.storage.getAlarm())).toBe(start + 25_000);
 });
 
@@ -161,4 +161,29 @@ it('all weekday migration flags retire direct collectors and dispatch seven inde
  await worker.scheduled({cron:'0 * * * *',scheduledTime:clock,noRetry(){}},config);
  expect(fetcher).toHaveBeenCalledTimes(8);
  for(const shard of ['01','02','03','04','05','06','07'])expect(fetcher.mock.calls.some(([u])=>String(u).endsWith(`/seats-${shard}.yml/dispatches`))).toBe(true);
+});
+
+it('does not dispatch any GitHub workflows when all migration switches are off', async () => {
+  await worker.scheduled({cron:'0 * * * *',scheduledTime:clock,noRetry(){}}, {...env, GITHUB_SCHEDULE_ENABLED:'false', GITHUB_SEATS01_ENABLED:'false', GITHUB_SEATS02_ENABLED:'false', GITHUB_SEATS03_ENABLED:'false', GITHUB_SEATS04_ENABLED:'false', GITHUB_SEATS05_ENABLED:'false', GITHUB_SEATS06_ENABLED:'false', GITHUB_SEATS07_ENABLED:'false'});
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
+
+it("pauses Monday AWS without enabling GitHub or pausing other targets", async () => {
+  const saved = env.AWS_SEATS01_ENABLED;
+  try {
+    env.AWS_SEATS01_ENABLED = "false";
+    const stub = env.SCHEDULER.getByName("monday-paused");
+    await stub.tick(clock);
+    clock += 30_000;
+    await runDurableObjectAlarm(stub);
+    const urls = fetcher.mock.calls.map(([req]) => (req as Request).url);
+    expect(urls.some(url => url.includes("alert-seats-01/"))).toBe(false);
+    for (const target of targets.filter(t => t !== "seats-01")) {
+      expect(urls.some(url => url.includes(`alert-${target === "schedule" ? "schedules" : target}/`))).toBe(true);
+    }
+    fetcher.mockClear();
+    await worker.scheduled({cron:"0 * * * *",scheduledTime:clock} as ScheduledController, env);
+    expect(fetcher).not.toHaveBeenCalled();
+  } finally { env.AWS_SEATS01_ENABLED = saved; }
 });
