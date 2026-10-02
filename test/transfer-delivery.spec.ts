@@ -15,3 +15,14 @@ it('does not acknowledge failed deliveries and does not invoke for an acknowledg
   expect(await deliverTransfer(payload,undefined,invoke,ack)).toBe(true);
   expect(ack).toHaveBeenCalledWith('a');
 });
+
+it('accepts only explicit approval in accepted mode and saves the sent payload hash', async () => {
+  const payload = {hash:'sent'} as ScheduleTransfer;
+  const invoke = vi.fn().mockResolvedValue({accepted:true}), ack=vi.fn();
+  expect(await deliverTransfer(payload,undefined,invoke,ack,false,'accepted')).toBe(true);
+  expect(ack).toHaveBeenCalledWith('sent');
+  ack.mockClear();
+  invoke.mockResolvedValue({accepted:false});
+  await expect(deliverTransfer(payload,undefined,invoke,ack,false,'accepted')).rejects.toThrow('Receiver did not acknowledge');
+  expect(ack).not.toHaveBeenCalled();
+});

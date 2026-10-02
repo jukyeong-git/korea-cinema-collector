@@ -51,23 +51,21 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Resolve latest compatible Camoufox release
-        id: browser-version
-        run: |
-          node --import tsx scripts/resolve-browser-version.ts
+      - name: Run tests before collection
+        run: npm test
+      - name: Browser cache week
+        id: browser-week
+        # Reuse the runtime within each UTC ISO week; refresh when dependencies change.
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - name: Restore browser runtime
         id: browser-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ~/.cache/camoufox
-          key: cgv-camoufox-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.browser-version.outputs.version }}-${{ hashFiles('package-lock.json') }}
+          key: cgv-camoufox-weekly-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}-${{ steps.browser-week.outputs.week }}
       - name: Download browser on cache miss
         if: steps.browser-cache.outputs.cache-hit != 'true'
-        run: |
-          npx --no-install camoufox-js fetch
-          node --input-type=module -e 'import {installedVerStr} from "camoufox-js/dist/pkgman.js"; if(installedVerStr()!==process.env.EXPECTED_VERSION) throw Error("Browser release changed during setup; rerun");'
-        env:
-          EXPECTED_VERSION: ${{ steps.browser-version.outputs.version }}
+        run: npx --no-install camoufox-js fetch
       - name: Prepare display
         run: |
           if ! command -v xvfb-run >/dev/null || ! command -v xauth >/dev/null; then

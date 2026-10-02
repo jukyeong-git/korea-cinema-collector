@@ -107,12 +107,13 @@ async function main() {
       const payload = makePayload(entries,now);
       try {
         phase = 'delivery';
-        // Refresh eligibility and retry pending notifications even when availability is unchanged.
-        const changed = await deliverTransfer(payload,Date.now()-deliveredAt >= 60_000 ? undefined : state.hash,async value => {
+        // Monday forwards only changed data; other weekdays retain their periodic refresh.
+        const acknowledgedHash = shard === '01' || Date.now()-deliveredAt < 60_000 ? state.hash : undefined;
+        const changed = await deliverTransfer(payload,acknowledgedHash,async value => {
           const response = await lambda.send(new InvokeCommand({FunctionName:process.env.RECEIVER_FUNCTION!,
             InvocationType:'RequestResponse',Payload:Buffer.from(JSON.stringify({...value,dryRun}))}));
           return checkReceiver(response);
-        },hash => save({version:1,hash,observedAt:now.toISOString()}),dryRun);
+        },hash => save({version:1,hash,observedAt:now.toISOString()}),dryRun,shard === '01' ? 'accepted' : 'strict');
         if (changed) deliveredAt=Date.now();
         console.log(JSON.stringify({event:'seats_cycle',index,weekday:weekdayName,shard,sessions:payload.entries.length,
           changed,dryRun,durationMs:Date.now()-start,hash:payload.hash}));
