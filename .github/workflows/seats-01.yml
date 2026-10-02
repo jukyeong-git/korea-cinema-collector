@@ -97,6 +97,14 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run || 'false' }}
           STATE_PATH: state/seats-01.json
         run: xvfb-run -a node --import tsx scripts/collect-weekday-seats-browser.ts
+      - name: Upload first 403 screenshot
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: seats-01-first-403-${{ github.run_id }}
+          path: diagnostics/first-403.png
+          if-no-files-found: ignore
+          retention-days: 3
       - name: Persist acknowledged state or collection cooldown
         if: ${{ always() && inputs.dry_run != true }}
         working-directory: state

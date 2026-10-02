@@ -2,7 +2,7 @@ import { retryCollection } from '../src/core/retry-collection';
 import { annotateError, checkReceiver } from '../src/core/error-details';
 import { seatShard } from '../src/core/seat-shards';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { launchOptions } from 'camoufox-js';
 import { firefox, type Browser } from 'playwright-core';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
@@ -34,6 +34,7 @@ if (!Number.isFinite(deadline) || deadline <= 0 || deadline > Date.now() + 59.5 
 const save = (next: State) => { state = next; writeFileSync(statePath, JSON.stringify(state) + '\n'); };
 const lambda = new LambdaClient({ maxAttempts: 1 });
 let phase = 'browser_setup';
+let capturedForbidden = false;
 async function main() {
   phase = 'browser_setup';
   if (state.retryAt && state.retryAt > Date.now()) { console.log(JSON.stringify({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()})); return; }
@@ -48,9 +49,21 @@ async function main() {
     const context = await browser.newContext();
     const page = await context.newPage();
     const report = (event: object) => console.log(JSON.stringify(event));
+    const captureForbidden = async () => {
+      if (shard !== '01' || capturedForbidden) return;
+      capturedForbidden = true;
+      try {
+        mkdirSync('diagnostics', {recursive:true});
+        await page.screenshot({path:'diagnostics/first-403.png',fullPage:true,timeout:5000});
+        report({event:'cgv_403_screenshot_saved',phase,path:'diagnostics/first-403.png'});
+      } catch {
+        report({event:'cgv_403_screenshot_failed',phase});
+      }
+    };
     phase = 'navigation';
     await retryForbidden(async () => {
       const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
+      if (nav?.status() === 403) await captureForbidden();
       if (nav && !nav.ok()) throw new CgvHttpError(nav.status(),nav.headers()['retry-after'] ?? null,'Navigation failed');
     }, {deadline,phase:'navigation',report});
     await sleep(5000);
@@ -63,6 +76,7 @@ async function main() {
           const response = await fetch(url,{credentials:'include',signal:AbortSignal.timeout(15_000)});
           return {status:response.status,body:await response.text(),retryAfter:response.headers.get('retry-after')};
         },String(input));
+        if (result.status === 403) await captureForbidden();
         if (result.status >= 400) stopped = true;
         return new Response(result.body,{status:result.status,headers:result.retryAfter ? {'retry-after':result.retryAfter} : {}});
       } catch (e) {
