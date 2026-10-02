@@ -2,7 +2,7 @@ import { retryCollection } from '../src/core/retry-collection';
 import { annotateError, checkReceiver } from '../src/core/error-details';
 import { seatShard } from '../src/core/seat-shards';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { launchOptions } from 'camoufox-js';
 import { firefox, type Browser } from 'playwright-core';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
@@ -13,16 +13,9 @@ import { performanceStart } from '../src/core/seat-monitor';
 import { deliverTransfer } from '../src/core/transfer-delivery';
 import { retryForbidden } from '../src/core/retry-forbidden';
 import { collectSeatObservation } from '../src/core/collect-seat-observation';
-import { readStoredSeatPlan } from '../src/core/stored-seat-plan';
-import { createDynamoDbSessionRepository } from '../src/platform/aws/dynamodb-session-repository';
-import type { SeatCandidate } from '../src/core/types';
 
 
 const {id: shard, weekday, name: weekdayName} = seatShard(process.env.SEAT_SHARD);
-const scheduleSource = process.env.SEAT_SCHEDULE_SOURCE ?? 'cgv';
-if (!['cgv', 'dynamodb'].includes(scheduleSource)) throw Error('Invalid seat schedule source');
-if (scheduleSource === 'dynamodb' && !process.env.TABLE_NAME) throw Error('TABLE_NAME is required for stored schedules');
-const repository = scheduleSource === 'dynamodb' ? createDynamoDbSessionRepository(process.env.TABLE_NAME!) : undefined;
 type State = { version: 1; hash?: string; observedAt?: string; retryAt?: number };
 const statePath = process.env.STATE_PATH ?? `state/seats-${shard}.json`;
 let state: State = existsSync(statePath) ? JSON.parse(readFileSync(statePath, 'utf8')) : {version:1};
@@ -34,7 +27,6 @@ if (!Number.isFinite(deadline) || deadline <= 0 || deadline > Date.now() + 59.5 
 const save = (next: State) => { state = next; writeFileSync(statePath, JSON.stringify(state) + '\n'); };
 const lambda = new LambdaClient({ maxAttempts: 1 });
 let phase = 'browser_setup';
-let capturedForbidden = false;
 async function main() {
   phase = 'browser_setup';
   if (state.retryAt && state.retryAt > Date.now()) { console.log(JSON.stringify({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()})); return; }
@@ -42,28 +34,14 @@ async function main() {
   let browser: Browser | undefined;
   const endTimer = setTimeout(() => { void browser?.close().catch(()=>{}); }, deadline - Date.now());
   try {
-    const browserOptions = {headless:false,geoip:shard === '01',locale:'ko-KR'};
-    console.log(JSON.stringify({event:'browser_options',shard,...browserOptions}));
-    browser = await firefox.launch({...await launchOptions(browserOptions),timeout:Math.min(60_000,Math.max(1,deadline-Date.now()))});
+    browser = await firefox.launch({...await launchOptions({headless:false,geoip:false,locale:'ko-KR'}),timeout:Math.min(60_000,Math.max(1,deadline-Date.now()))});
     if (Date.now() >= deadline) return;
     const context = await browser.newContext();
     const page = await context.newPage();
     const report = (event: object) => console.log(JSON.stringify(event));
-    const captureForbidden = async () => {
-      if (shard !== '01' || capturedForbidden) return;
-      capturedForbidden = true;
-      try {
-        mkdirSync('diagnostics', {recursive:true});
-        await page.screenshot({path:'diagnostics/first-403.png',fullPage:true,timeout:5000});
-        report({event:'cgv_403_screenshot_saved',phase,path:'diagnostics/first-403.png'});
-      } catch {
-        report({event:'cgv_403_screenshot_failed',phase});
-      }
-    };
     phase = 'navigation';
     await retryForbidden(async () => {
       const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
-      if (nav?.status() === 403) await captureForbidden();
       if (nav && !nav.ok()) throw new CgvHttpError(nav.status(),nav.headers()['retry-after'] ?? null,'Navigation failed');
     }, {deadline,phase:'navigation',report});
     await sleep(5000);
@@ -76,7 +54,6 @@ async function main() {
           const response = await fetch(url,{credentials:'include',signal:AbortSignal.timeout(15_000)});
           return {status:response.status,body:await response.text(),retryAfter:response.headers.get('retry-after')};
         },String(input));
-        if (result.status === 403) await captureForbidden();
         if (result.status >= 400) stopped = true;
         return new Response(result.body,{status:result.status,headers:result.retryAfter ? {'retry-after':result.retryAfter} : {}});
       } catch (e) {
@@ -89,26 +66,16 @@ async function main() {
     let deliveredAt = 0, index = 0;
     while (!stopped && Date.now() < deadline) {
       const start = Date.now(); index++;
-      let now = new Date();
-      let candidates: SeatCandidate[];
-      if (repository) {
-        phase = 'stored_schedule';
-        const plan = await readStoredSeatPlan(repository, weekday, now);
-        candidates = plan.candidates;
-        console.log(JSON.stringify({event:'seat_collection_plan',source:'dynamodb',shard,weekday:weekdayName,
-          dates:plan.dates,candidates:candidates.length}));
-      } else {
-        phase = 'collection';
-        const schedule = await retryForbidden(async () => {
-          // fetchApiImaxSessions drains all in-flight requests before rejecting.
-          // Restart the complete observation so no failed date is published as empty.
-          stopped = false;
-          return fetchApiImaxSessions({fetch:browserFetch,weekday});
-        }, {deadline,phase:'collection',report});
-        if (!schedule.seatCandidates || schedule.failedDates?.length) throw Error('Incomplete schedule');
-        now = new Date();
-        candidates = schedule.seatCandidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === weekday && performanceStart(c) > now.getTime());
-      }
+      phase = 'collection';
+      const schedule = await retryForbidden(async () => {
+        // fetchApiImaxSessions drains all in-flight requests before rejecting.
+        // Restart the complete observation so no failed date is published as empty.
+        stopped = false;
+        return fetchApiImaxSessions({fetch:browserFetch,weekday});
+      }, {deadline,phase:'collection',report});
+      if (!schedule.seatCandidates || schedule.failedDates?.length) throw Error('Incomplete schedule');
+      const now = new Date();
+      const candidates = schedule.seatCandidates.filter(c => new Date(`${c.displayDate}T00:00:00Z`).getUTCDay() === weekday && performanceStart(c) > now.getTime());
       phase = 'seats';
       const entries = await collectSeatObservation(candidates,
         async candidate => {
@@ -120,13 +87,12 @@ async function main() {
       const payload = makePayload(entries,now);
       try {
         phase = 'delivery';
-        // Monday forwards only changed data; other weekdays retain their periodic refresh.
-        const acknowledgedHash = shard === '01' || Date.now()-deliveredAt < 60_000 ? state.hash : undefined;
-        const changed = await deliverTransfer(payload,acknowledgedHash,async value => {
+        // Refresh eligibility and retry pending notifications even when availability is unchanged.
+        const changed = await deliverTransfer(payload,Date.now()-deliveredAt >= 60_000 ? undefined : state.hash,async value => {
           const response = await lambda.send(new InvokeCommand({FunctionName:process.env.RECEIVER_FUNCTION!,
             InvocationType:'RequestResponse',Payload:Buffer.from(JSON.stringify({...value,dryRun}))}));
           return checkReceiver(response);
-        },hash => save({version:1,hash,observedAt:now.toISOString()}),dryRun,shard === '01' ? 'accepted' : 'strict');
+        },hash => save({version:1,hash,observedAt:now.toISOString()}),dryRun);
         if (changed) deliveredAt=Date.now();
         console.log(JSON.stringify({event:'seats_cycle',index,weekday:weekdayName,shard,sessions:payload.entries.length,
           changed,dryRun,durationMs:Date.now()-start,hash:payload.hash}));
