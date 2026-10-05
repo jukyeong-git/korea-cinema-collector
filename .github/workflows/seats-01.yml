@@ -21,6 +21,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CAMOUFOX_PROFILE: monday
     steps:
       - name: Set session deadline including setup
         env:

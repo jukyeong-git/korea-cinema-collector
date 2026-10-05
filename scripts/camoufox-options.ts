@@ -16,5 +16,10 @@ export function compatibleConfig(version: string): Record<string, unknown> {
   });
 }
 export function browserOptions(locale: string) {
-  return launchOptions({headless:false,geoip:false,locale,config:compatibleConfig(installedVerStr())});
+  const mondayProfile = process.env.CAMOUFOX_PROFILE === 'monday';
+  // camoufox-js generates Firefox-only fingerprints internally. Pass constraints
+  // through its supported API instead of injecting a second fingerprint.
+  return launchOptions({headless:false,geoip:false,locale,config:compatibleConfig(installedVerStr()),
+    ...(mondayProfile ? {os:['windows', 'macos', 'linux'] as ('windows' | 'macos' | 'linux')[],
+      screen:{maxWidth:1920,maxHeight:1080}} : {})});
 }
