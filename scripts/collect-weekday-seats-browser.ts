@@ -3,7 +3,7 @@ import { annotateError, checkReceiver } from '../src/core/error-details';
 import { seatShard } from '../src/core/seat-shards';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { browserOptions } from './camoufox-options';
+import { browserOptions, browserContextOptions } from './camoufox-options';
 import { firefox, type Browser } from 'playwright-core';
 import { InvokeCommand, LambdaClient } from '@aws-sdk/client-lambda';
 import { fetchApiImaxSessions, CgvHttpError } from '../src/collectors/cgv-api';
@@ -36,7 +36,7 @@ async function main() {
   try {
     browser = await firefox.launch({...await browserOptions('ko-KR'),timeout:Math.min(60_000,Math.max(1,deadline-Date.now()))});
     if (Date.now() >= deadline) return;
-    const context = await browser.newContext();
+    const context = await browser.newContext(browserContextOptions());
     const page = await context.newPage();
     const report = (event: object) => console.log(JSON.stringify(event));
     phase = 'navigation';

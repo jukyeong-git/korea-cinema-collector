@@ -21,5 +21,9 @@ export function browserOptions(locale: string) {
   // through its supported API instead of injecting a second fingerprint.
   return launchOptions({headless:false,geoip:false,locale,config:compatibleConfig(installedVerStr()),
     ...(mondayProfile ? {os:['windows', 'macos', 'linux'] as ('windows' | 'macos' | 'linux')[],
-      screen:{maxWidth:1920,maxHeight:1080}} : {})});
+      screen:{maxWidth:1920,maxHeight:1080}, enable_cache:true, exclude_addons:['UBO'] as 'UBO'[]} : {})});
+}
+
+export function browserContextOptions() {
+  return process.env.CAMOUFOX_PROFILE === 'monday' ? {viewport:null} : {};
 }
