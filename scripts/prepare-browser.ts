@@ -1,6 +1,6 @@
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
-import {launchOptions} from 'camoufox-js';
+import {browserOptions} from './camoufox-options';
 import {firefox} from 'playwright-core';
 
 export async function ensureBrowser(probe: () => Promise<void>, install: () => unknown, log: (event: string, values?: {systemInstall?: boolean}) => void) {
@@ -19,7 +19,7 @@ export async function ensureBrowser(probe: () => Promise<void>, install: () => u
 async function probe() {
   let browser;
   try {
-    browser = await firefox.launch({...await launchOptions({headless:false,geoip:false,locale:'en-GB'}),timeout:30000});
+    browser = await firefox.launch({...await browserOptions('en-GB'),timeout:30000});
     const page = await browser.newPage();
     await page.setContent('<p>Browser ready</p>');
     if (await page.locator('p').textContent() !== 'Browser ready') throw new Error('RENDER_FAILED');
