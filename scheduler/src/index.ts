@@ -27,7 +27,7 @@ export async function invokeLambda(env: Env, target: Target, slot: string, fetch
   if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw Error("Missing AWS invoke credential");
   const client = new AwsClient({ accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
     service: "lambda", region: env.AWS_REGION });
-  const name = target === "schedule" ? "korea-cinema-alert-schedules" : `korea-cinema-alert-${target}`;
+  const name = `aws-korea-cinema-alert-${target === "schedule" ? "schedules" : target}`;
   const request = await client.sign(`https://lambda.${env.AWS_REGION}.amazonaws.com/2015-03-31/functions/${name}/invocations`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-amz-invocation-type": "Event" },
