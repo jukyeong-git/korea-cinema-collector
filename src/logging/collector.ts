@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { logSummary, type LogStatus } from './contract';
 const runId = randomUUID(), started = Date.now();
-const safeKeys = new Set(['date','dates','sessions','index','weekday','shard','changed','dryRun','phase','attempt','elapsedMs','retry','delayMs','retryAt','retryAfter','category','errorType','durationMs','checked','failed','skipped','partial','maxAttempts','batch','systemInstall','code']);
+const safeKeys = new Set(['date','dates','sessions','index','weekday','shard','changed','dryRun','phase','attempt','elapsedMs','retry','delayMs','retryAt','retryAfter','category','errorType','checked','failed','skipped','partial','maxAttempts','batch','systemInstall','code']);
 export function report(input: object) {
   const row = input as Record<string, unknown>;
   const event = typeof row.event === 'string' && /^[a-z][a-z0-9_-]{0,80}$/.test(row.event) ? row.event : 'collector_diagnostic';

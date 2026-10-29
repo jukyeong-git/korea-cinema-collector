@@ -26,7 +26,7 @@ let phase = 'browser_setup';
 async function main() {
   phase = 'browser_setup';
   if (state.retryAt && state.retryAt > Date.now()) { report({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()}); return; }
-  if (Date.now() >= deadline) { report({event:'schedule_complete',reason:'deadline during setup'}); return; }
+  if (Date.now() >= deadline) return;
   let browser: Browser | undefined;
   const endTimer = setTimeout(() => { void browser?.close().catch(()=>{}); }, deadline - Date.now());
   try {
@@ -94,7 +94,6 @@ async function main() {
     }
   } catch (error) {
     if (Date.now() < deadline) throw error;
-    report({event:'schedule_complete',reason:'deadline'});
   } finally { clearTimeout(endTimer); await browser?.close(); }
 }
 try { await retryCollection(main,{deadline,phase:()=>phase,report}); }

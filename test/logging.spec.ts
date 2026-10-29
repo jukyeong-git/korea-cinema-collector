@@ -26,3 +26,13 @@ it('emits collector summaries using shared contract levels', () => {
     }
   } finally { info.mockRestore(); warn.mockRestore(); error.mockRestore(); }
 });
+
+it('records duration once while preserving other diagnostics', () => {
+  const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+  try {
+    report({event:'phase_complete', durationMs:42, phase:'collection'});
+    const row = JSON.parse(log.mock.calls[0][0] as string);
+    expect(row.durationMs).toBe(42);
+    expect(row.diagnostics).toEqual({phase:'collection'});
+  } finally { log.mockRestore(); }
+});
