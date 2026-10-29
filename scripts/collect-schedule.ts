@@ -1,3 +1,4 @@
+import { report } from "../src/logging/collector";
 import { publishScheduleSnapshot } from "../src/platform/aws/schedule-snapshot";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
@@ -12,7 +13,7 @@ if (state.version !== 1 || (state.hash !== undefined && !/^[a-f0-9]{64}$/.test(s
 const dryRun = process.env.DRY_RUN === "true";
 const save = (value: ScheduleState) => writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
 if (state.retryAt && state.retryAt > Date.now()) {
-  console.log("CGV schedule cooldown active until", new Date(state.retryAt).toISOString());
+  report({ event: "cooldown", retryAt: new Date(state.retryAt).toISOString() });
 } else {
   try {
     // Collect verified dates independently, with at most five simultaneous requests.
@@ -20,8 +21,8 @@ if (state.retryAt && state.retryAt > Date.now()) {
     const observedAt = new Date();
     const payload = makeSchedulePayload(schedule, observedAt);
     if (!dryRun) {
-      console.log(JSON.stringify({ event: "schedule_snapshot", ...await publishScheduleSnapshot(
-        process.env.TABLE_NAME ?? "korea-cinema-alert", schedule, observedAt) }));
+      const snapshot = await publishScheduleSnapshot(process.env.TABLE_NAME ?? "korea-cinema-alert", schedule, observedAt);
+      report({ event: "schedule_snapshot", ...snapshot });
     }
     const result = await deliverChangedSchedule(payload, state, async value => {
       const response = await new LambdaClient({}).send(new InvokeCommand({
@@ -37,7 +38,7 @@ if (state.retryAt && state.retryAt > Date.now()) {
       const acknowledged: ScheduleState = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : state;
       save({ ...acknowledged, retryAt: schedule.retryAt });
     }
-    console.log(JSON.stringify({ failedDates: schedule.failedDates ?? [], dates: payload.dates.length, sessions: payload.sessions.length, hash: payload.hash, dryRun, ...result }));
+    report({ event: "provider_summary", dates: payload.dates.length, sessions: payload.sessions.length, dryRun, ...result });
   } catch (error) {
     if (!dryRun && error && typeof error === "object" && "retryAt" in error
       && typeof error.retryAt === "number" && Number.isFinite(error.retryAt)) save({ ...state, retryAt: error.retryAt });

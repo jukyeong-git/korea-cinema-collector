@@ -1,3 +1,4 @@
+import { report } from "../src/logging/collector";
 import { readFileSync, writeFileSync } from "node:fs";
 import { InvokeCommand, LambdaClient } from "@aws-sdk/client-lambda";
 import { fetchPreferredSeats } from "../src/collectors/cgv-seats";
@@ -9,7 +10,7 @@ const state = JSON.parse(readFileSync(statePath, "utf8")) as { version: number; 
 if (state.version !== 1 || (state.hash !== undefined && !/^[a-f0-9]{64}$/.test(state.hash))) throw Error("Invalid state file");
 const now = new Date();
 if (state.retryAt && state.retryAt > now.getTime()) {
-  console.log("CGV cooldown active until", new Date(state.retryAt).toISOString());
+  report({ event: "cooldown", retryAt: new Date(state.retryAt).toISOString() });
 } else {
   try {
     const repository = createDynamoDbSessionRepository(process.env.TABLE_NAME ?? "korea-cinema-alert");
@@ -29,8 +30,7 @@ if (state.retryAt && state.retryAt > now.getTime()) {
         catch (error) {
           const detail = error as { status?: number; retryAt?: number };
           failures.push({ performanceId: candidate.performanceId, retryAt: detail?.retryAt });
-          console.warn(JSON.stringify({ event: "seat_collection_failed", performanceId: candidate.performanceId,
-            date: candidate.displayDate, status: detail?.status }));
+          report({ event: "seat_collection_failed", date: candidate.displayDate, status: detail?.status });
           if (detail?.status === 429 || deadline.aborted) stopped = true;
         }
       }
@@ -40,9 +40,9 @@ if (state.retryAt && state.retryAt > now.getTime()) {
     const retryAt = Math.max(0, ...failures.map(f => Number(f.retryAt) || 0));
     if (ready.length && !entries.length) throw Object.assign(Error("All seat queries failed; state unchanged"), retryAt ? { retryAt } : {});
     const payload = { ...makePayload(entries, now), ...(entries.length < ready.length ? { partial: true } : {}) };
-    console.log(JSON.stringify({ checked: entries.length, failed: failures.length, skipped: ready.length - entries.length - failures.length, partial: payload.partial === true, hash: payload.hash, changed: state.hash !== payload.hash }));
+    report({ event: "provider_summary", checked: entries.length, failed: failures.length, skipped: ready.length - entries.length - failures.length, partial: payload.partial === true, changed: state.hash !== payload.hash });
     if (process.env.DRY_RUN === "true") {
-      console.log("Dry run: collection validated; Lambda and state unchanged");
+      report({ event: "dry_run" });
     } else if (payload.hash !== state.hash) {
       const result = await new LambdaClient({}).send(new InvokeCommand({
         FunctionName: process.env.LAMBDA_FUNCTION_NAME ?? "git-korea-cinema-alert-seats-01",
@@ -52,7 +52,7 @@ if (state.retryAt && state.retryAt > now.getTime()) {
       const response = JSON.parse(Buffer.from(result.Payload).toString());
       if (response.accepted !== true || response.hash !== payload.hash) throw Error("Lambda did not acknowledge this hash");
       writeFileSync(statePath, JSON.stringify({ version: 1, hash: payload.hash, observedAt: payload.observedAt }, null, 2) + "\n");
-      console.log("Lambda acknowledged", JSON.stringify(response));
+      report({ event: "lambda_acknowledged" });
     }
     if (retryAt && process.env.DRY_RUN !== "true") {
       const acknowledged = JSON.parse(readFileSync(statePath, "utf8"));

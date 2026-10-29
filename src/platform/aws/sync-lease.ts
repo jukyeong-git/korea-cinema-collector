@@ -1,3 +1,4 @@
+import { report } from "../../logging/collector";
 import { randomUUID } from "node:crypto";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, UpdateCommand } from "@aws-sdk/lib-dynamodb";
@@ -16,7 +17,7 @@ export async function withSyncLease<T>(tableName: string, work: () => Promise<T>
     }));
   } catch (error) {
     if (error instanceof Error && error.name === "ConditionalCheckFailedException") {
-      console.log("CGV sync skipped: active lease or rate-limit cooldown", { leaseKey });
+      report({ event: "lease_skipped" });
       return { skipped: true };
     }
     throw error;

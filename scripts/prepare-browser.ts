@@ -1,3 +1,4 @@
+import { report } from '../src/logging/collector';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {browserOptions,browserContextOptions} from './camoufox-options';
@@ -34,9 +35,9 @@ function install() {
   if(result.error || result.status!==0) throw new Error('SYSTEM_INSTALL_FAILED');
 }
 if(process.argv[1] && import.meta.url===pathToFileURL(process.argv[1]).href) {
-  try { await ensureBrowser(probe,install,(event,values={})=>console.log(JSON.stringify({event,...values}))); }
+  try { await ensureBrowser(probe,install,(event,values={})=>report({event,...values})); }
   catch(error) {
-    console.error(JSON.stringify({event:'browser-prepare-failed',code:['BROWSER_PREFLIGHT_FAILED','BROWSER_PREFLIGHT_FAILED_AFTER_INSTALL','SYSTEM_INSTALL_FAILED'].includes(error instanceof Error ? error.message : '') && error instanceof Error?error.message:'PREPARE_FAILED'}));
+    report({event:'browser-prepare-failed',code:['BROWSER_PREFLIGHT_FAILED','BROWSER_PREFLIGHT_FAILED_AFTER_INSTALL','SYSTEM_INSTALL_FAILED'].includes(error instanceof Error ? error.message : '') && error instanceof Error?error.message:'PREPARE_FAILED'});
     process.exitCode=1;
   }
 }

@@ -1,3 +1,4 @@
+import { report, finish } from '../src/logging/collector';
 import { retryCollection } from '../src/core/retry-collection';
 import { annotateError, checkReceiver } from '../src/core/error-details';
 import { seatShard } from '../src/core/seat-shards';
@@ -29,8 +30,8 @@ const lambda = new LambdaClient({ maxAttempts: 1 });
 let phase = 'browser_setup';
 async function main() {
   phase = 'browser_setup';
-  if (state.retryAt && state.retryAt > Date.now()) { console.log(JSON.stringify({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()})); return; }
-  if (Date.now() >= deadline) { console.log(JSON.stringify({event:'seats_complete',reason:'deadline during setup'})); return; }
+  if (state.retryAt && state.retryAt > Date.now()) { report({event:'cooldown',retryAt:new Date(state.retryAt).toISOString()}); return; }
+  if (Date.now() >= deadline) { report({event:'seats_complete',reason:'deadline during setup'}); return; }
   let browser: Browser | undefined;
   const endTimer = setTimeout(() => { void browser?.close().catch(()=>{}); }, deadline - Date.now());
   try {
@@ -38,7 +39,6 @@ async function main() {
     if (Date.now() >= deadline) return;
     const context = await browser.newContext(browserContextOptions());
     const page = await context.newPage();
-    const report = (event: object) => console.log(JSON.stringify(event));
     phase = 'navigation';
     await retryForbidden(async () => {
       const nav = await page.goto('https://cgv.co.kr/cnm/movieBook/cinema?siteNo=0013',{waitUntil:'domcontentloaded',timeout:30_000});
@@ -94,8 +94,8 @@ async function main() {
           return checkReceiver(response);
         },hash => save({version:1,hash,observedAt:now.toISOString()}),dryRun);
         if (changed) deliveredAt=Date.now();
-        console.log(JSON.stringify({event:'seats_cycle',index,weekday:weekdayName,shard,sessions:payload.entries.length,
-          changed,dryRun,durationMs:Date.now()-start,hash:payload.hash}));
+        report({event:'seats_cycle',index,weekday:weekdayName,shard,sessions:payload.entries.length,
+          changed,dryRun,durationMs:Date.now()-start,hash:payload.hash});
       } catch (error) {
         throw annotateError(error,{phase:'delivery'});
       }
@@ -103,13 +103,15 @@ async function main() {
     }
   } catch (error) {
     if (Date.now() < deadline) throw error;
-    console.log(JSON.stringify({event:'seats_complete',reason:'deadline'}));
+    report({event:'seats_complete',reason:'deadline'});
   } finally { clearTimeout(endTimer); await browser?.close(); }
 }
-try { await retryCollection(main,{deadline,phase:()=>phase,report:event=>console.log(JSON.stringify(event))}); }
+try { await retryCollection(main,{deadline,phase:()=>phase,report}); }
 catch(error) {
   if (error instanceof CgvHttpError && error.retryAt && !dryRun) save({...state,retryAt:error.retryAt});
-  console.error(JSON.stringify({event:'seats_stopped',status:error instanceof CgvHttpError ? error.status : undefined,
-    retryAfter:error instanceof CgvHttpError ? error.retryAfter : undefined,reason:'Collection or delivery failed; prior state retained'}));
+  report({event:'seats_stopped',status:error instanceof CgvHttpError ? error.status : undefined,
+    retryAfter:error instanceof CgvHttpError ? error.retryAfter : undefined,reason:'Collection or delivery failed; prior state retained'});
   process.exitCode=1;
 }
+
+finish(process.exitCode ? 'failed' : 'complete');

@@ -1,3 +1,4 @@
+import { report } from '../logging/collector';
 import { annotateError } from '../core/error-details';
 import type { CinemaSession, PublishedSchedule, SeatCandidate } from "../core/types";
 import { koreaDate, parseRows, scheduleDate } from "./cgv-model";
@@ -79,8 +80,9 @@ export function parseApiRows(values: unknown[], date: string, now = new Date()) 
 
 export class CgvHttpError extends Error {
   readonly retryAt?: number;
-  constructor(readonly status: number, readonly retryAfter: string | null, readonly errorBody: string, now = Date.now()) {
-    super(`CGV API HTTP ${status}; Retry-After=${retryAfter ?? "absent"}; body=${errorBody}`);
+  readonly errorBody = "[omitted]";
+  constructor(readonly status: number, readonly retryAfter: string | null, _errorBody: string, now = Date.now()) {
+    super(`CGV API HTTP ${status}`);
     if (status === 429) {
       const requested = retryAfter && /^\d+$/.test(retryAfter) ? now + Number(retryAfter) * 1000 : Date.parse(retryAfter ?? "");
       this.retryAt = Number.isFinite(requested) ? Math.max(now + 60_000, requested) : now + 300_000;
@@ -104,7 +106,7 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
     });
     const body = await response.text();
     if (!response.ok) throw new CgvHttpError(response.status, response.headers.get("retry-after"),
-      body.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, "[REDACTED_IP]").slice(0, 4096), now().getTime());
+      "[omitted]", now().getTime());
     const payload = object(JSON.parse(body));
     if (payload.statusCode !== 0 || !Array.isArray(payload.data)) throw Error("CGV API response unsuccessful or malformed");
     return payload.data;
@@ -129,12 +131,12 @@ export async function fetchApiImaxSessions(options: { fetch?: typeof fetch; now?
       const date = dates[index];
       try {
         batches[index] = parseApiSchedule(await request("searchMovScnInfo", date.replaceAll("-", "")), date, now());
-        console.log(JSON.stringify({ event: "schedule_date_collected", date, sessions: batches[index].sessions.length }));
+        report({ event: "schedule_date_collected", date, sessions: batches[index].sessions.length });
       } catch (error) {
         failures.push({ date, error });
-        console.warn(JSON.stringify({ event: "schedule_date_failed", date,
+        report({ event: "schedule_date_failed", date,
           status: error instanceof CgvHttpError ? error.status : undefined,
-          error: error instanceof CgvHttpError ? "CGV HTTP error" : "Request or validation failed" }));
+          error: error instanceof CgvHttpError ? "CGV HTTP error" : "Request or validation failed" });
         if (!options.allowPartial || (error instanceof CgvHttpError && error.status === 429)) {
           failed = true;
           throw error;

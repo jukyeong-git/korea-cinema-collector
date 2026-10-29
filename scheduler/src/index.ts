@@ -1,3 +1,4 @@
+import { logSummary } from "./logging/contract";
 import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
@@ -24,6 +25,7 @@ export function enabled(env: Env, target: Target): boolean {
 }
 
 export async function invokeLambda(env: Env, target: Target, slot: string, fetcher: typeof fetch = fetch): Promise<void> {
+  const started = Date.now(), runId = crypto.randomUUID();
   if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw Error("Missing AWS invoke credential");
   const client = new AwsClient({ accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
     service: "lambda", region: env.AWS_REGION });
@@ -40,7 +42,7 @@ export async function invokeLambda(env: Env, target: Target, slot: string, fetch
     const response = await fetcher(request, { signal: controller.signal });
     await response.body?.cancel();
     if (response.status !== 202) throw Error(`Lambda invoke failed: HTTP ${response.status}`);
-    console.log(JSON.stringify({ event: "lambda_accepted", target, slot }));
+    logSummary({ event: "lambda_accepted", country: "KR", city: "Seoul", component: "scheduler", operation: "lambda_dispatch", runId, provider: "CGV", status: "complete", durationMs: Date.now()-started, diagnostics: { target, slot } });
   } finally {
     // Release the timeout immediately so successful calls do not keep the DO awake.
     clearTimeout(timer);
@@ -86,7 +88,7 @@ export class CinemaScheduler extends DurableObject<Env> {
     if (this.env.ENABLED !== "true") return;
     const now = Date.now();
     if (!Number.isFinite(scheduledTime) || scheduledTime > now + 10_000 || now - scheduledTime > 60_000) {
-      console.log(JSON.stringify({ event: "stale_cron_skipped" })); return;
+      logSummary({ event: "stale_cron_skipped", country: "KR", city: "Seoul", component: "scheduler", operation: "cron", runId: crypto.randomUUID(), status: "skipped", durationMs: 0 }); return;
     }
     const cycle = String(Math.floor(scheduledTime / 60_000));
     this.ctx.storage.sql.exec("DELETE FROM slots WHERE expires < ?", now - 120_000);
@@ -133,13 +135,14 @@ export class CinemaScheduler extends DurableObject<Env> {
     this.ctx.storage.sql.exec("UPDATE slots SET status = ? WHERE id = ?", sent ? "sent" : "failed", id);
   }
   private async dispatch(target: Target, id: string): Promise<boolean> {
+    const started = Date.now();
     try {
       await invokeLambda(this.env, target, id);
       return true;
     } catch (error) {
       // Never log request objects or credentials from signing/network errors.
-      console.error(JSON.stringify({ event: "lambda_dispatch_failed", target, slot: id,
-        reason: error instanceof Error && /^Lambda invoke failed: HTTP \d+$/.test(error.message) ? error.message : "Invoke network or credential error" }));
+      const match = error instanceof Error ? /^Lambda invoke failed: HTTP (\d{3})$/.exec(error.message) : null;
+      logSummary({ event: "lambda_dispatch_failed", country: "KR", city: "Seoul", component: "scheduler", operation: "lambda_dispatch", runId: crypto.randomUUID(), status: "failed", durationMs: Date.now()-started, error: { category: match ? "http" : "dispatch", ...(match ? { httpStatus: Number(match[1]) } : {}) }, diagnostics: { target, slot: id } });
       return false;
     }
   }
@@ -169,8 +172,14 @@ export default {
         ...targets.filter(target => target.startsWith("seats-") && githubSeatEnabled(env, target.slice(-2))).map(target => `${target}.yml`),
       ];
       const results = await Promise.allSettled(workflows.map(async workflow => {
-        const result = await dispatchScheduleWorkflow(env, fetch, workflow);
-        console.log(JSON.stringify({event:"github_schedule",workflow,result,scheduledTime:controller.scheduledTime}));
+        const started = Date.now(), runId = crypto.randomUUID();
+        try {
+          const result = await dispatchScheduleWorkflow(env, fetch, workflow);
+          logSummary({ event:"github_schedule", country:"KR", city:"Seoul", component:"scheduler", operation:"github_dispatch", runId, status:"complete", durationMs:Date.now()-started, diagnostics:{ workflow,result,scheduledTime:controller.scheduledTime } });
+        } catch (error) {
+          logSummary({ event:"github_schedule", country:"KR", city:"Seoul", component:"scheduler", operation:"github_dispatch", runId, status:"failed", durationMs:Date.now()-started, error:{category:"dispatch"}, diagnostics:{workflow,scheduledTime:controller.scheduledTime} });
+          throw error;
+        }
       }));
       if (results.some(r => r.status === "rejected")) throw Error("GitHub hourly dispatch failed");
     } else {
