@@ -15,6 +15,7 @@ export function sanitizeLogValue(value: unknown, depth = 0): unknown {
   if (value instanceof Error) return { category: safeError(value).category, bodyOmitted: true };
   if (typeof value === 'string') {
     if (/<\/?[a-z!][^>]*>/i.test(value)) return '[OMITTED]';
+    if (/^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun), \d{2} (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(value)) return value;
     if (/^\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)?$/.test(value) || /^[0-9a-f]{8}-[0-9a-f-]{27}$/i.test(value)) return value;
     return value.replace(/https?:\/\/[^\s"']+/gi, '[URL REDACTED]')
       .replace(/\bBearer\s+\S+/gi, 'Bearer [REDACTED]')
@@ -29,14 +30,41 @@ export function sanitizeLogValue(value: unknown, depth = 0): unknown {
   }
   if (Array.isArray(value)) return value.slice(0, 100).map(item => sanitizeLogValue(item, depth + 1));
   if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) =>
-    [key, (key === 'bodyOmitted' || key === 'bodyTruncated') && typeof item === 'boolean' ? item : key === 'bodyReadError' && typeof item === 'string' && /^[A-Za-z][A-Za-z0-9]{0,80}$/.test(item) ? item : SECRET_KEY.test(key) ? '[REDACTED]' : sanitizeLogValue(item, depth + 1)]));
+    [key, (key === 'bodyOmitted' || key === 'bodyTruncated' || key === 'errorBodyTruncated') && typeof item === 'boolean' ? item : key === 'bodyReadError' && typeof item === 'string' && /^[A-Za-z][A-Za-z0-9]{0,80}$/.test(item) ? item : SECRET_KEY.test(key) ? '[REDACTED]' : sanitizeLogValue(item, depth + 1)]));
   return value;
+}
+// Recovery state is process-local and bounded; a cold start loses it intentionally.
+const failures = new Map<string, { firstFailedAt: string; count: number }>();
+const MAX_FAILURE_KEYS = 256;
+/** Emit failed/partial records and the first subsequent recovery for the same scope. */
+export function emitLogRecord(record: LogRecord, level?: 'WARN' | 'ERROR'): void {
+  const key = JSON.stringify([record.country, record.city, record.component, record.operation, record.provider ?? '']);
+  if (record.status === 'skipped') return;
+  if (record.status === 'complete') {
+    const previous = failures.get(key);
+    if (!previous) return;
+    failures.delete(key);
+    const entry = { schemaVersion: 1, timestamp: new Date().toISOString(), level: 'INFO',
+      ...(sanitizeLogValue({ ...record, event: 'recovery', diagnostics: { ...record.diagnostics, firstFailedAt: previous.firstFailedAt, failureCount: previous.count } }) as LogRecord) };
+    console.log(JSON.stringify(entry));
+    return;
+  }
+  const previous = failures.get(key);
+  failures.delete(key);
+  failures.set(key, { firstFailedAt: previous?.firstFailedAt ?? new Date().toISOString(), count: (previous?.count ?? 0) + 1 });
+  if (failures.size > MAX_FAILURE_KEYS) failures.delete(failures.keys().next().value!);
+  const severity = level ?? (record.status === 'failed' ? 'ERROR' : 'WARN');
+  const entry = { schemaVersion: 1, timestamp: new Date().toISOString(), level: severity, ...(sanitizeLogValue(record) as LogRecord) };
+  (severity === 'ERROR' ? console.error : console.warn)(JSON.stringify(entry));
+}
+/** Record an actual recovery action, even when no failure was seen in this process. */
+export function logRecovery(record: LogRecord): void {
+  const entry = { schemaVersion: 1, timestamp: new Date().toISOString(), level: 'INFO', ...(sanitizeLogValue(record) as LogRecord) };
+  console.log(JSON.stringify(entry));
 }
 /** Bodies are intentionally omitted; callers may supply safe scalar diagnostics. */
 export function logSummary(record: LogRecord): void {
-  const level = record.status === 'failed' ? (record.event === 'request_failed' ? 'WARN' : 'ERROR') : record.status === 'partial' ? 'WARN' : 'INFO';
-  const entry = { schemaVersion: 1, timestamp: new Date().toISOString(), level, ...(sanitizeLogValue(record) as LogRecord) };
-  (level === 'ERROR' ? console.error : level === 'WARN' ? console.warn : console.log)(JSON.stringify(entry));
+  emitLogRecord(record, record.status === 'failed' && record.event === 'request_failed' ? 'WARN' : undefined);
 }
 /** Do not expose untrusted error names, messages, response bodies, URLs or stack traces. */
 export function safeError(error: unknown): { category: string } {
