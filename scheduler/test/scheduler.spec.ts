@@ -199,12 +199,14 @@ it("adds only reconcile at 30s while preserving 5s schedules and 60s seats", asy
     env.RECONCILE_ENABLED="true";
     const stub=env.SCHEDULER.getByName("reconcile-cadence"), start=clock;
     await stub.tick(start);
-    for(const seconds of [2,5,10,15,20,25,30,32,35,40,45,50,55]) {
+    for(const seconds of [5,10,15,20,25,30,35,40,45,50,55]) {
       clock=start+seconds*1000;
       await runDurableObjectAlarm(stub);
       const count=fetcher.mock.calls.length;
       await Promise.all([stub.tick(start),runInDurableObject(stub,obj=>obj.alarm())]);
       expect(fetcher).toHaveBeenCalledTimes(count);
+      const reconcileCalls = fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules-reconcile/"));
+      expect(reconcileCalls).toHaveLength(seconds < 30 ? 1 : 2);
     }
     const urls=fetcher.mock.calls.map(([req])=>(req as Request).url);
     expect(urls.filter(url=>url.includes("alert-schedules-reconcile/"))).toHaveLength(2);
@@ -213,6 +215,26 @@ it("adds only reconcile at 30s while preserving 5s schedules and 60s seats", asy
     fetcher.mockClear();clock=start+132000;await runDurableObjectAlarm(stub);
     expect(fetcher.mock.calls.filter(([req])=>(req as Request).url.includes("alert-schedules-reconcile/"))).toHaveLength(1);
   } finally {env.RECONCILE_ENABLED=saved;}
+});
+it("realigns a persisted offset cadence after one latest invocation", async () => {
+  const saved = env.RECONCILE_ENABLED;
+  try {
+    env.RECONCILE_ENABLED = "true";
+    const stub = env.SCHEDULER.getByName("reconcile-legacy-offset"), start = clock;
+    await runInDurableObject(stub, (_obj, state) => {
+      state.storage.sql.exec("INSERT INTO cadence VALUES (?, ?)", "schedule-reconcile", start + 32_000);
+    });
+    clock = start + 92_000;
+    await stub.tick(clock);
+    const reconcileCalls = () => fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules-reconcile/"));
+    expect(reconcileCalls()).toHaveLength(1);
+    expect(await runInDurableObject(stub, (_obj, state) => state.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", "schedule-reconcile").one().next_due)).toBe(start + 120_000);
+    await runInDurableObject(stub, obj => obj.alarm());
+    expect(reconcileCalls()).toHaveLength(1);
+    clock = start + 120_000;
+    await runDurableObjectAlarm(stub);
+    expect(reconcileCalls()).toHaveLength(2);
+  } finally { env.RECONCILE_ENABLED = saved; }
 });
 it("controls reconcile independently of schedule and seats switches",()=>{
   expect(enabled({...env,RECONCILE_ENABLED:"true",SCHEDULE_ENABLED:"false",SEATS_ENABLED:"false"},"schedule-reconcile")).toBe(true);

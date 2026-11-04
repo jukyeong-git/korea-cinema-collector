@@ -79,13 +79,7 @@ export class CinemaScheduler extends DurableObject<Env> {
       const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", target).toArray()[0];
       if (next && next.next_due > now) continue;
       const interval = fastInterval(target);
-      // Offset reconciliation from the 5-second collector to reduce shared-lease collisions.
-      const phase = target === "schedule-reconcile" ? 2_000 : 0;
-      const due = Math.floor((now - phase) / interval) * interval + phase;
-      if (!next && phase && due < now) {
-        this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + interval);
-        continue;
-      }
+      const due = Math.floor(now / interval) * interval;
       this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + interval);
       claimed.push({ target, slot: `${due}:${target}:alarm` });
     }
