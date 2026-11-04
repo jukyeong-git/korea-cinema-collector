@@ -16,6 +16,7 @@
   "vars": {
     "ENABLED": "true",
     "SCHEDULE_ENABLED": "true",
+    "RECONCILE_ENABLED": "true",
     "SEATS_ENABLED": "true",
     "AWS_SEATS01_ENABLED": "true",
     "AWS_REGION": "ap-northeast-2",

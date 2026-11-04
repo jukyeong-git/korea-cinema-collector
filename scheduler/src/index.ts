@@ -3,8 +3,8 @@ import { DurableObject } from "cloudflare:workers";
 import { AwsClient } from "aws4fetch";
 
 type Slot = { id: string; due: number; expires: number; status: string };
-const fastInterval = (target: Target) => target === "schedule" ? 5_000 : 60_000;
-export const targets = ["schedule", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
+const fastInterval = (target: Target) => target === "schedule" ? 5_000 : target === "schedule-reconcile" ? 30_000 : 60_000;
+export const targets = ["schedule", "schedule-reconcile", "seats-01", "seats-02", "seats-03", "seats-04", "seats-05", "seats-06", "seats-07"] as const;
 export type Target = typeof targets[number];
 const fastTargets: readonly Target[] = targets;
 
@@ -19,6 +19,7 @@ export function githubSeatEnabled(env: Env, shard: string): boolean {
 }
 
 export function enabled(env: Env, target: Target): boolean {
+  if (target === "schedule-reconcile") return env.ENABLED === "true" && env.RECONCILE_ENABLED === "true";
   if (target === "seats-01" && env.AWS_SEATS01_ENABLED === "false") return false;
   if (target.startsWith("seats-") && githubSeatEnabled(env, target.slice(-2))) return false;
   return env.ENABLED === "true" && (target === "schedule" ? env.SCHEDULE_ENABLED : env.SEATS_ENABLED) === "true";
@@ -29,7 +30,7 @@ export async function invokeLambda(env: Env, target: Target, slot: string, fetch
   if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY) throw Error("Missing AWS invoke credential");
   const client = new AwsClient({ accessKeyId: env.AWS_ACCESS_KEY_ID, secretAccessKey: env.AWS_SECRET_ACCESS_KEY,
     service: "lambda", region: env.AWS_REGION });
-  const name = `aws-korea-cinema-alert-${target === "schedule" ? "schedules" : target}`;
+  const name = `aws-korea-cinema-alert-${target === "schedule" ? "schedules" : target === "schedule-reconcile" ? "schedules-reconcile" : target}`;
   const request = await client.sign(`https://lambda.${env.AWS_REGION}.amazonaws.com/2015-03-31/functions/${name}/invocations`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-amz-invocation-type": "Event" },
@@ -78,7 +79,13 @@ export class CinemaScheduler extends DurableObject<Env> {
       const next = this.ctx.storage.sql.exec<{ next_due: number }>("SELECT next_due FROM cadence WHERE target = ?", target).toArray()[0];
       if (next && next.next_due > now) continue;
       const interval = fastInterval(target);
-      const due = Math.floor(now / interval) * interval;
+      // Offset reconciliation from the 5-second collector to reduce shared-lease collisions.
+      const phase = target === "schedule-reconcile" ? 2_000 : 0;
+      const due = Math.floor((now - phase) / interval) * interval + phase;
+      if (!next && phase && due < now) {
+        this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + interval);
+        continue;
+      }
       this.ctx.storage.sql.exec("INSERT INTO cadence VALUES (?, ?) ON CONFLICT(target) DO UPDATE SET next_due = excluded.next_due", target, due + interval);
       claimed.push({ target, slot: `${due}:${target}:alarm` });
     }

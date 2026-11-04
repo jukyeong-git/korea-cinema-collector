@@ -26,14 +26,14 @@ it("calls schedule every 5s and all seven seat workers every 60s", async () => {
     await stub.tick(start);
     expect(fetcher).toHaveBeenCalledTimes(count);
   }
-  for (const target of targets) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`aws-korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 12 : 1);
+  for (const target of targets.filter(t => enabled(env,t))) expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`aws-korea-cinema-alert-${target === "schedule" ? "schedules" : target}/`))).toHaveLength(target === "schedule" ? 12 : 1);
   const req = fetcher.mock.calls[0][0] as Request;
   expect(req.headers.get("authorization")).toMatch(/^AWS4-HMAC-SHA256 /);
   expect(req.headers.get("x-amz-invocation-type")).toBe("Event");
   clock = start + 60_000;
   await Promise.all([stub.tick(clock), runInDurableObject(stub, obj => obj.alarm())]);
   expect(fetcher.mock.calls.filter(([req]) => (req as Request).url.includes("alert-schedules/"))).toHaveLength(13);
-  for (const target of targets.filter(target => target !== "schedule")) {
+  for (const target of targets.filter(target => target.startsWith("seats-"))) {
     const calls = fetcher.mock.calls.filter(([req]) => (req as Request).url.includes(`alert-${target}/`));
     expect(calls).toHaveLength(2);
   }
@@ -183,11 +183,39 @@ it("pauses Monday AWS without enabling GitHub or pausing other targets", async (
     await runDurableObjectAlarm(stub);
     const urls = fetcher.mock.calls.map(([req]) => (req as Request).url);
     expect(urls.some(url => url.includes("alert-seats-01/"))).toBe(false);
-    for (const target of targets.filter(t => t !== "seats-01")) {
+    for (const target of targets.filter(t => t !== "seats-01" && enabled(env,t))) {
       expect(urls.some(url => url.includes(`alert-${target === "schedule" ? "schedules" : target}/`))).toBe(true);
     }
     fetcher.mockClear();
     await worker.scheduled({cron:"0 * * * *",scheduledTime:clock} as ScheduledController, env);
     expect(fetcher).not.toHaveBeenCalled();
   } finally { env.AWS_SEATS01_ENABLED = saved; }
+});
+
+
+it("adds only reconcile at 30s while preserving 5s schedules and 60s seats", async () => {
+  const saved=env.RECONCILE_ENABLED;
+  try {
+    env.RECONCILE_ENABLED="true";
+    const stub=env.SCHEDULER.getByName("reconcile-cadence"), start=clock;
+    await stub.tick(start);
+    for(const seconds of [2,5,10,15,20,25,30,32,35,40,45,50,55]) {
+      clock=start+seconds*1000;
+      await runDurableObjectAlarm(stub);
+      const count=fetcher.mock.calls.length;
+      await Promise.all([stub.tick(start),runInDurableObject(stub,obj=>obj.alarm())]);
+      expect(fetcher).toHaveBeenCalledTimes(count);
+    }
+    const urls=fetcher.mock.calls.map(([req])=>(req as Request).url);
+    expect(urls.filter(url=>url.includes("alert-schedules-reconcile/"))).toHaveLength(2);
+    expect(urls.filter(url=>url.includes("alert-schedules/"))).toHaveLength(12);
+    for(const shard of ["01","02","03","04","05","06","07"]) expect(urls.filter(url=>url.includes(`alert-seats-${shard}/`))).toHaveLength(1);
+    fetcher.mockClear();clock=start+132000;await runDurableObjectAlarm(stub);
+    expect(fetcher.mock.calls.filter(([req])=>(req as Request).url.includes("alert-schedules-reconcile/"))).toHaveLength(1);
+  } finally {env.RECONCILE_ENABLED=saved;}
+});
+it("controls reconcile independently of schedule and seats switches",()=>{
+  expect(enabled({...env,RECONCILE_ENABLED:"true",SCHEDULE_ENABLED:"false",SEATS_ENABLED:"false"},"schedule-reconcile")).toBe(true);
+  expect(enabled({...env,RECONCILE_ENABLED:"false"},"schedule-reconcile")).toBe(false);
+  expect(enabled({...env,RECONCILE_ENABLED:"true",ENABLED:"false"},"schedule-reconcile")).toBe(false);
 });
